@@ -52,3 +52,34 @@ def read_compressed(filename):
              return io.TextIOWrapper(zip_content)
     else :
         return open(filename, 'r')
+
+
+def is_compressed(filename):
+    """
+    Check if the input file is compressed from the first bytes.
+
+    Parameters
+    ----------
+    filename : str
+        The path to the input file
+    Returns
+    -------
+    bool
+        True if the file is compressed, False otherwise.
+    """
+
+    # Standard header bytes for diff compression formats
+    comp_bytes = {
+    b"\x1f\x8b\x08": "gz",
+    b"\x42\x5a\x68": "bz2",
+    b"\x50\x4b\x03\x04": "zip"
+    }
+    with open(filename, 'rb') as f:
+        file_start = f.read(max_len)
+    for magic, filetype in comp_bytes.items():
+        if file_start.startswith(magic):
+            return True
+    return False
+
+
+

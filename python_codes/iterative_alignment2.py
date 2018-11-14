@@ -11,7 +11,7 @@ import subprocess as sp
 import shutil as st
 from random import randint
 from threading import Thread
-import compressed_utils as cmpu
+import compressed_utils as ct
 
 ##############################
 #        ARGUMENTS
@@ -69,13 +69,16 @@ def iterative_align(infile, temp_directory, index,
     my_set = set()
     total_reads = 0
 
-    # Bowtie only accepts uncompressed fastq. So we need to uncompress
-    # it into a temp file
-    uncomp_path = os.path.join(temp_directory,
-                               os.path.basename(infile) + ".tmp")
-    with cmpu.read_compressed(infile) as inf:
-        with open(uncomp_path, 'w') as uncomp:
-            st.copyfileobj(inf, uncomp)
+    # Bowtie only accepts uncompressed fastq: uncompress it into a temp file
+    if ct.is_compressed(infile):
+        uncomp_path = os.path.join(temp_directory,
+                                   os.path.basename(infile) + ".tmp")
+        with ct.read_compressed(infile) as inf:
+            with open(uncomp_path, 'w') as uncomp:
+                st.copyfileobj(inf, uncomp)
+    else:
+        uncomp_path = infile
+
     # Counting reads
     with open(uncomp_path, 'r') as inf:
         for line in inf:
