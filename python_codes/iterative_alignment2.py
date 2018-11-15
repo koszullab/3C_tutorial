@@ -84,7 +84,7 @@ def iterative_align(infile, temp_directory, index,
     total_reads /= 4
 
     # use first read to guess read length. Stripping newline.
-    with open(uncomp_path, 'r'):
+    with open(uncomp_path, 'r') as inf:
         size = inf.readline()
         size = len(inf.readline().rstrip())
 

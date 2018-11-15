@@ -74,6 +74,7 @@ def is_compressed(filename):
     b"\x42\x5a\x68": "bz2",
     b"\x50\x4b\x03\x04": "zip"
     }
+    max_len = max(len(x) for x in comp_bytes)
     with open(filename, 'rb') as f:
         file_start = f.read(max_len)
     for magic, filetype in comp_bytes.items():
