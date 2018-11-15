@@ -20,8 +20,9 @@ import sys,os
 print(sys.version)
 
 # Get longest common prefix between fastq files
-SAMPLE_NAME = os.path.commonprefix(expand(HIC_FASTQ, mate=MATES))
+SAMPLE_NAME = os.path.basename(os.path.commonprefix(expand(HIC_FASTQ, mate=MATES)))
 BASE_IDX = REF_DIR + 'bowtie/' + REF_FILE
+LOG_FILE = 'data/log/' + SAMPLE_NAME + '_' + REF_FILE + '.log'
 def get_final_reads(f):
     # Returns the path to the reads used to generate the matrix
     if FILTER_LIBRARY_EVENTS:
@@ -32,21 +33,21 @@ def get_final_reads(f):
 
 rule all:
     input:
-        get_final_reads
+        get_final_reads, LOG_FILE
 
 
 rule logging:
     input:
         aligned = 'data/map.dat',
         used = get_final_reads
-    log:
-        'data/' + SAMPLE_NAME + '_' + REF_FILE + '.log'
+    output:
+        LOG_FILE
     shell:
         """
-        reads_aligned=$(wc -l {input.aligned})
-        reads_used=$(wc -l {input.used})
-        echo "$reads_aligned aligned reads with MQ > 30" >> {log}
-        echo "$reads_used reads used to generate matrix" >> {log}
+        reads_aligned=$(wc -l {input.aligned} | awk '{{print $1}}')
+        reads_used=$(wc -l {input.used} | awk '{{print $1}}')
+        echo "$reads_aligned aligned reads with MQ > 30" >> {output}
+        echo "$reads_used reads used to generate matrix" >> {output}
         """
 
 
