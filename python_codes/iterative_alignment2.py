@@ -28,8 +28,6 @@ def parse_args():
     parser.add_argument('-i', '--index', required=True,
                         help='the prefix of the bowtie-built index of '
                         'reference genome')
-    parser.add_argument('-s', '--size', type=int, required=True,
-                        help='the size of reads')
     parser.add_argument('-p', '--nb_processors', default=1, type=int,
                         help='number of CPUs used for alignment.')
     parser.add_argument('-o1', '--outfile1', default='alignement_1',
@@ -57,7 +55,7 @@ def generate_temp_dir(infile):
 
 
 def iterative_align(infile, temp_directory, index,
-                    size, nb_processors, outfile):
+                    nb_processors, outfile):
     """Aligns iteratively the reads of infile with bowtie2."""
     # length of the fragments to align
     n = 20
@@ -84,6 +82,11 @@ def iterative_align(infile, temp_directory, index,
         for line in inf:
             total_reads += 1
     total_reads /= 4
+
+    # use first read to guess read length. Stripping newline.
+    with open(uncomp_path, 'r'):
+        size = inf.readline()
+        size = len(inf.readline().rstrip())
 
     print('{0} reads to parse'.format(total_reads))
 
@@ -248,7 +251,6 @@ def main():
     infile1 = args.infile1
     infile2 = args.infile2
     index = args.index
-    size = args.size
     nb_processors = args.nb_processors
     outfile1 = args.outfile1
     outfile2 = args.outfile2
@@ -259,8 +261,8 @@ def main():
 
     # Aligns iteritatively the fastq file
     print('\n' + '-' * 20 + '\nComputing iterative alignment\n')
-    t1 = Thread(target=iterative_align, args=(infile1, temp_directory1, index, size, nb_processors, outfile1))
-    t2 = Thread(target=iterative_align, args=(infile2, temp_directory2, index, size, nb_processors, outfile2))
+    t1 = Thread(target=iterative_align, args=(infile1, temp_directory1, index, nb_processors, outfile1))
+    t2 = Thread(target=iterative_align, args=(infile2, temp_directory2, index, nb_processors, outfile2))
     t1.start()
     t2.start()
     t1.join()
