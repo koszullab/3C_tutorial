@@ -113,5 +113,5 @@ rule index_reference:
         # expand(BASE_IDX + ".{ext}", ext=['1.bt2','2.bt2','3.bt2','4.bt2','rev1.bt2','rev2.bt2'])
         done_flag = touch(BASE_IDX + '.done')
     shell:
-        "bowtie2-build --threads {threads} {input.ref} {params.base_idx}"
+        "bowtie2-build {input.ref} {params.base_idx}"
 
