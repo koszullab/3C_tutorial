@@ -14,7 +14,7 @@ REF_FILE = 'chr01.fa'
 HIC_FASTQ = 'data/hic.end{mate}.fastq.gz' # path to fastq files containing Hi-C reads. e.g. file.end{mate} if files are file.end1 and file.end2 
 MATES=["1", "2"]
 ENZYME = "DpnII" # Restriction enzyme used for the Hi-C experiment.
-FILTER_LIBRARY_EVENTS = True
+FILTER_LIBRARY_EVENTS = False
 ################################################################################
 import sys,os
 print(sys.version)
@@ -27,7 +27,7 @@ def get_final_reads(f):
     if FILTER_LIBRARY_EVENTS:
         return 'data/map.dat.indices.filtered'
     else:
-        return 'data/map.dat.indices.filter'
+        return 'data/map.dat.indices'
 
 
 rule all:
@@ -94,14 +94,16 @@ rule iterative_mapping:
     threads: 8
     params:
         index = REF_DIR + 'bowtie/' + REF_FILE,
-        base_name = temp(expand('data/map{mate}', mate=MATES))
+        base1 = 'data/map' + MATES[0],
+        base2 = 'data/map' + MATES[1]
     input:
         fastq = expand(HIC_FASTQ, mate=MATES),
         done_flag = BASE_IDX + '.done'
     output:
-        temp(expand('data/map{mate}.sam.0', mate=MATES))
+        temp('data/map' + MATES[0] + '.sam.0'),
+        temp('data/map' + MATES[1] + '.sam.0')
     shell:
-        "echo {output};python python_codes/iterative_alignment2.py {input.fastq} -i {params.index} -p {threads} -o1 {params.base_name[0]} -o2 {params.base_name[1]}"
+        "python python_codes/iterative_alignment2.py {input.fastq} -i {params.index} -p {threads} -o1 {params.base1} -o2 {params.base2}"
 
 rule index_reference:
     threads: 8
