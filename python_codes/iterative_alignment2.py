@@ -116,7 +116,7 @@ def iterative_align(infile, temp_directory, index, nb_processors, outfile):
         print("Aligning reads")
         temp_alignment = "{0}/temp_alignment.sam".format(temp_directory)
         sp.call(
-            "bowtie2 -x {0} -p {1} --rdg 500,3 --rfg 500,3 --sam-no-hd --quiet \
+            "bowtie2 -x {0} -p {1} --rdg 500,3 --rfg 500,3 --quiet \
              --very-sensitive -S {2} {3}".format(
                 index, nb_processors, temp_alignment, truncated_reads
             ),
@@ -143,7 +143,7 @@ def iterative_align(infile, temp_directory, index, nb_processors, outfile):
     truncated_reads = truncate_reads(temp_directory, uncomp_path, my_set, size)
     print("Aligning reads")
     sp.call(
-        "bowtie2 -x {0} -p {1} --rdg 500,3 --rfg 500,3 --sam-no-hd --quiet --very-sensitive -S {2} {3}".format(
+        "bowtie2 -x {0} -p {1} --rdg 500,3 --rfg 500,3 --quiet --very-sensitive -S {2} {3}".format(
             index, nb_processors, temp_alignment, truncated_reads
         ),
         shell=True,
@@ -159,7 +159,16 @@ def iterative_align(infile, temp_directory, index, nb_processors, outfile):
         for r in temp_sam:
             if r.query_name in my_set:
                 outf.write(
-                    r.query_name, r.reference_name, r.flag, r.ref_pos, r.mapping_quality
+                    "\t".join(
+                        [
+                            str(r.query_name),
+                            str(r.reference_name),
+                            str(r.flag),
+                            str(r.reference_start),
+                            str(r.mapping_quality),
+                        ]
+                    )
+                    + "\n"
                 )
     outf.close()
     print(
@@ -203,28 +212,23 @@ def sort_samfile(temp_alignment, outfile, my_set):
         for r in temp_sam:
             if r.flag in [0, 16] and r.mapping_quality >= 30:
                 outf.write(
-                    r.query_name, r.reference_name, r.flag, r.ref_pos, r.mapping_quality
+                    "\t".join(
+                        [
+                            str(r.query_name),
+                            str(r.reference_name),
+                            str(r.flag),
+                            str(r.reference_start),
+                            str(r.mapping_quality),
+                        ]
+                    )
+                    + "\n"
                 )
             else:
-                my_set.add(name)
+                my_set.add(r.query_name)
         print("{0} reads left to map.".format(len(my_set)))
     outf.close()
 
     return my_set
-
-
-def get_next_infile(infile, temp_directory, my_set, n):
-    """
-    Writes an intermediary input file (fastq format) where all the aligned
-    reads are stocked for the next round of aligment.
-    """
-    temp_fastq = "{0}/temporary{1}_1.fastq".format(temp_directory, n)
-    with FastxFile(infile, "r") as inf, open(temp_fastq, "w") as outf:
-        for entry in inf:
-            if entry.name in my_set:
-                fout.write(str(entry))
-
-    return temp_fastq
 
 
 ##############################
