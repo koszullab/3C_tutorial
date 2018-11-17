@@ -164,7 +164,7 @@ def iterative_align(infile, temp_directory, index, nb_processors, outfile):
                             str(r.query_name),
                             str(r.reference_name),
                             str(r.flag),
-                            str(r.reference_start),
+                            str(r.reference_start + 1),
                             str(r.mapping_quality),
                         ]
                     )
@@ -217,7 +217,7 @@ def sort_samfile(temp_alignment, outfile, my_set):
                             str(r.query_name),
                             str(r.reference_name),
                             str(r.flag),
-                            str(r.reference_start),
+                            str(r.reference_start + 1),
                             str(r.mapping_quality),
                         ]
                     )
