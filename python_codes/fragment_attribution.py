@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-This code assigns a restriction fragment to a locus (chrm-position). 
+This code assigns a restriction fragment to a locus (chrm-position).
 @author: Remi Montagne (reimplementation of Axel Cournac's code)
 """
 import sys
@@ -10,53 +10,122 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio import Restriction
 from Bio.Restriction import *
+import argparse
+
 
 ##############################
-#        FUNCTIONS         
+#        PARSE CL arguments
 ##############################
-def get_ref_genome_list(ref_genome_directory):
-    """Gets all the files in the indicated directory and checks that they are in fasta format."""
-    if not ref_genome_directory.endswith('/'): ref_genome_directory = ref_genome_directory + '/'
-    ref_genome_directory = ref_genome_directory + '*'
-    ref_genome_list =  glob.glob(ref_genome_directory)
-    ref_genome_list =  [f for f in ref_genome_list if f.split('.')[-1] in ['fa', 'fasta', 'fna', 'fsa']]
-    print('Reference genome directory: {0}.\nContains: {1}'.format(ref_genome_directory, ref_genome_list))
-    
-    return ref_genome_list
 
-def get_restriction_table(ref_genome_list, enz):
-    """Get the list of restriction sites for all fasta files in ref_genome_list.
-    Returns it as a dictionnary with the chromosome name as a key and 
-    a 2D array (1row for starts, 1 row for ends) as values."""
-    print('\nRestriction enzyme: '+ enz)
-    rb = RestrictionBatch([enz])    #Restriction batch containing the restriction enzyme
-    enzyme = rb.get(enz)  #conversion from string type to restriction type
-    
-    restriction_table={} #dictionary {chromosome_name: [list_of_restriction_sites]}
-    for chr_file in ref_genome_list :
-        handle = open(chr_file, "rU")
-        for rec in SeqIO.parse(handle, "fasta"):
-            chr_name=rec.id
-            map_restriction = rb.search(rec.seq)
-            map_restriction = map_restriction[enzyme]
-            map_restriction = [0] + map_restriction
-            map_restriction.append(len(rec.seq))
-            restriction_table[chr_name] = map_restriction
-            print('{0}: {1} restriction sites'.format(chr_name, len(map_restriction)))
-        handle.close() 
-    return restriction_table
 
-def find_frag(chrm, pos, restriction_table) :
-    """Find the index of a chromosome restriction fragment"""
-    T=restriction_table[chrm];
-    bottom = 0            # indice of the first restriction fragment 
-    top = len(T) - 1    # indice of the last restriction fragment 
+def _test():
+    import doctest
+
+    doctest.testmod()
+
+
+def parse_args():
+    """ Gets the arguments from the command line."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "input_file",
+        type=argparse.FileType("r"),
+        help="Path to the input file containing the coordinates of Hi-C "
+        "interacting pairs (dat format). Use '-' to read from stdin.",
+    )
+    parser.add_argument(
+        "output_file",
+        nargs="?",
+        default=sys.stdout,
+        help="Path to the output file (dat.indices format). Defaults to stdout.",
+    )
+    parser.add_argument(
+        "-e",
+        "--enzyme",
+        required=True,
+        help="The restriction enzyme used in the Hi-C protocol. E.g. DpnII",
+    )
+    parser.add_argument(
+        "-r",
+        "--reference",
+        required=True,
+        help="Path to the reference genome " "in FASTA format.",
+    )
+    return parser.parse_args()
+
+
+##############################
+#        FUNCTIONS
+##############################
+
+
+def get_restriction_table(seq, enz):
+    """
+    Get the restriction table for a genomic sequence.
+
+    Parameters
+    ----------
+    seq : Seq object
+        A biopython Seq object representing a chromosomes or contig.
+    enz : str
+        The name of the restriction enzyme used.
+    Returns
+    -------
+    list
+        List of restriction fragment boundary positions for the input sequence.
+
+    >>> get_restriction_table(Seq("AAGATCGATCGG"),"DpnII")
+    [0, 3, 7, 12]
+    >>> get_restriction_table(Seq("AA"),"DpnII")
+    [0, 2]
+    >>> get_restriction_table(Seq("AA"),"aeiou1")
+    Traceback (most recent call last):
+        ...
+    ValueError: aeiou1 is not a valid restriction enzyme.
+    >>> get_restriction_table("AA","DpnII")
+    Traceback (most recent call last):
+        ...
+    TypeError: Expected Seq or MutableSeq instance, got <class 'str'> instead
+
+    """
+    # Restriction batch containing the restriction enzyme
+    try:
+        rb = RestrictionBatch([enz])
+    except ValueError:
+        raise ValueError("{} is not a valid restriction enzyme.".format(enz))
+    # Conversion from string type to restriction type
+    enz = rb.get(enz)
+    map_restriction = rb.search(seq)
+    map_restriction = map_restriction[enz]
+    map_restriction = [0] + map_restriction
+    map_restriction.append(len(seq))
+    return map_restriction
+
+
+def find_frag(chrm, pos, restriction_table):
+    """
+    Find the index of a chromosome restriction fragment
+    Parameters
+    ----------
+    chrm : str
+        The identifier of the chromosome
+    pos: int
+        A genomic position, in base pairs
+    Returns
+    -------
+    int
+        The index of the restriction fragment to which the position belongs
+    """
+    T = restriction_table[chrm]
+    bottom = 0  # indice of the first restriction fragment
+    top = len(T) - 1  # indice of the last restriction fragment
     found = False
-    # search the index of the read
+    # binary search for the index of the read
     while not found:
-        index = int((top + bottom)/2) # $index <- middle of the chr        
-        # if the position of the read is smaller than the position of the current index        
-        if top == bottom: found = True
+        index = int((top + bottom) / 2)  # $index <- middle of the chr
+        # if the position of the read is smaller than the position of the current index
+        if top == bottom:
+            found = True
         if pos < T[index]:
             top = index
         elif pos >= T[index + 1]:
@@ -65,57 +134,76 @@ def find_frag(chrm, pos, restriction_table) :
             found = True
     return index
 
+
 def write_indices_file(infile, outfile, restriction_table):
-    """Writes the output file which corresponds to the input file
-    with 2 more columns, for the restriction fragment index of each read."""
-    print('Attribution of index to reads.\n')
-    with open(infile, 'r') as inf, open(outfile, 'w') as outf: # open the file for reading
-        i=0    
-        for line in inf: # iterate over each line
+    """
+    Writes the output file which corresponds to the input file
+    with 2 more columns, for the restriction fragment index of each read.
+
+    Parameters
+    ----------
+    infile: str
+        Path to the input file
+    outfile: str
+        Path to the output file
+    restriction_table: dict
+        Dictionary with chromosome identifiers (str) as keys and list of
+        positions (int) of restriction sites as values.
+    """
+    print("Attribution of index to reads.\n")
+    with open(infile, "r") as inf, open(
+        outfile, "w"
+    ) as outf:  # open the file for reading
+        i = 0
+        for line in inf:  # iterate over each line
             i += 1
             if i % 5000000 == 0:
-                print('{0} million lines have been attributed restriction fragments.'.format(i/1000000))
-            chr1, pos1, sens1, chr2, pos2, sens2 = line.split() # split it by whitespace
-            pos1=int(pos1);sens1=int(sens1)
-            pos2=int(pos2);sens2=int(sens2)
-    
-            indice1=find_frag(chr1, pos1, restriction_table)
-            indice2=find_frag(chr2, pos2, restriction_table)
-    
-            outf.write('{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}\n'.format(chr1, pos1, sens1, indice1, chr2, pos2, sens2, indice2))
+                print(
+                    "{0} million lines have been attributed restriction fragments.".format(
+                        i / 1000000
+                    )
+                )
+            chr1, pos1, sens1, chr2, pos2, sens2 = (
+                line.split()
+            )  # split it by whitespace
+            pos1 = int(pos1)
+            sens1 = int(sens1)
+            pos2 = int(pos2)
+            sens2 = int(sens2)
+
+            indice1 = find_frag(chr1, pos1, restriction_table)
+            indice2 = find_frag(chr2, pos2, restriction_table)
+
+            outf.write(
+                "{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}\n".format(
+                    chr1, pos1, sens1, indice1, chr2, pos2, sens2, indice2
+                )
+            )
 
 
-##############################
-#           MAIN         
-##############################
-def main():
-    print('Usage : python fragment_attribution.py <infile(.dat format)> <restriction_enzyme> <path/to/reference/genome>')
-    
+if __name__ == "__main__":
+    _test()
+    print("Assigns restriction fragment ID to Hi-C records in a .dat file.")
+    args = parse_args()
     # Get arguments
-    infile = sys.argv[1]
-    outfile = infile + '.indices'
-    enz = sys.argv[2]
-    ref_genome_directory = sys.argv[3]
-    
-    # Get all the fasta files of individual chromosomes of reference genome(s)
-    try:
-        if op.isdir(ref_genome_directory):
-            print('ref genome directory')
-            ref_genome_list = get_ref_genome_list(ref_genome_directory)
-        else:
-            print('ref genome file')
-            ref_genome_list = [ref_genome_directory]
-            print('ref genomes list: {0}'.format(ref_genome_list))
-    except:
-        print('Couldn\'t get the reference genome. Did you enter the right directory or file name ?')
+    input_file = sys.stdin if args.input_file == "-" else args.input_file
+    output_file = args.output_file
+    enz = args.enzyme
+    ref = args.reference
 
-    # Get the lists of restriction sites of each chromosome in restriction_table
-    restriction_table = get_restriction_table(ref_genome_list, enz)
-        
-    # Associate each read from .dat file with its corresponding restriction fragment index and writes the resulting line
+    restriction_table = {}
+    with open(ref, "rU") as handle:
+        for rec in SeqIO.parse(handle, "fasta"):
+            chr_name = rec.id
+            # Get the lists of restriction sites of each chromosome into
+            # a restriction_table
+            restriction_table[chr_name] = get_restriction_table(rec.seq, enz)
+            print(
+                "{0}: {1} restriction sites".format(
+                    chr_name, len(restriction_table[chr_name])
+                )
+            )
+
+    # Associate each read from .dat file with its corresponding restriction
+    # fragment index and writes the resulting line
     write_indices_file(infile, outfile, restriction_table)
-    
-    return 0
-
-if __name__ == '__main__':
-    main()
