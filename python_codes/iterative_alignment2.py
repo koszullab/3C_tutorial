@@ -13,6 +13,7 @@ import shutil as st
 from random import getrandbits
 from threading import Thread
 import compressed_utils as ct
+import contextlib
 
 ##############################
 #        ARGUMENTS
@@ -123,6 +124,11 @@ def iterative_align(fq_in, tmp_dir, ref, n_cpu, sam_out, minimap2=False):
     remaining_reads = set()
     total_reads = 0
 
+    # If there is already a file with the same name as the output file,
+    # remove it. Otherwise, ignore.
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(sam_out)
+
     # Bowtie only accepts uncompressed fastq: uncompress it into a temp file
     if not minimap2 and ct.is_compressed(fq_in):
         uncomp_path = os.path.join(tmp_dir, os.path.basename(fq_in) + ".tmp")
@@ -226,9 +232,13 @@ def iterative_align(fq_in, tmp_dir, ref, n_cpu, sam_out, minimap2=False):
                     + "\n"
                 )
     outf.close()
+    r = 0
+    with open(sam_out, "r") as outf:
+        for line in outf:
+            r += 1
     print(
         "{0} reads aligned / {1} total reads.".format(
-            total_reads - n_remaining, total_reads
+            total_reads - len(remaining_reads), total_reads
         )
     )
 
@@ -237,7 +247,7 @@ def iterative_align(fq_in, tmp_dir, ref, n_cpu, sam_out, minimap2=False):
 
 def truncate_reads(tmp_dir, infile, unaligned_set, n):
     """
-    Writes the n first nucleotids of each sequence in infile to an auxialiary
+    Writes the n first nucleotids of each sequence in infile to an auxialiary.
     file in the temporary folder.
     Parameters
     ----------
@@ -246,8 +256,8 @@ def truncate_reads(tmp_dir, infile, unaligned_set, n):
     infile : str
         Path to the fastq file to truncate.
     unaligned_set : set
-        Contains the names of all reads that have not been aligned in previous
-        rounds.
+        Contains the names of all reads that did not map unambiguously in
+        previous rounds.
     n : int
         The number of basepairs to keep in each truncated sequence.
     str
@@ -266,9 +276,9 @@ def truncate_reads(tmp_dir, infile, unaligned_set, n):
 
 def filter_samfile(temp_alignment, filtered_out):
     """
-    Reads all the reads in the global input file (infile).
-    Write reads in input to the output file if they are aligned with a good
-    quality . Else, add their name in the set my_set for the next round
+    Reads all the reads in the input SAM alignment file.
+    Write reads to the output file if they are aligned with a good
+    quality, otherwise add their name in a set to stage them for the next round
     of alignment.
     Parameters
     ----------
@@ -278,13 +288,13 @@ def filter_samfile(temp_alignment, filtered_out):
         Path to the output filtered temporary alignment.
     Returns
     set:
-        Contains the names reads that did not align with a good quality.
+        Contains the names reads that did not align.
     """
     # Check the quality and status of each aligned fragment.
     # Write the ones with good quality in the final output file.
-    # Keep all fragment name and mapping status in a set for next step
-    # (see iterative_align())
-    bad_reads = set()
+    # Keep those that do not map unambiguously for the next round.
+
+    unaligned = set()
     outf = open(filtered_out, "a")
     with ps.AlignmentFile(temp_alignment, "r") as temp_sam:
         for r in temp_sam:
@@ -302,11 +312,12 @@ def filter_samfile(temp_alignment, filtered_out):
                     + "\n"
                 )
             else:
-                bad_reads.add(r.query_name)
-        print("{0} reads left to map.".format(len(bad_reads)))
+                unaligned.add(r.query_name)
+
+        print("{0} reads left to map.".format(len(unaligned)))
     outf.close()
 
-    return bad_reads
+    return unaligned
 
 
 ##############################
