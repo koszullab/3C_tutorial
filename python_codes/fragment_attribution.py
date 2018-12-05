@@ -29,27 +29,29 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "input_file",
-        type=argparse.FileType("r"),
+        type=str,
         help="Path to the input file containing the coordinates of Hi-C "
         "interacting pairs (dat format). Use '-' to read from stdin.",
     )
     parser.add_argument(
         "output_file",
         nargs="?",
-        default=sys.stdout,
+        type=str,
         help="Path to the output file (dat.indices format). Defaults to stdout.",
     )
     parser.add_argument(
         "-e",
         "--enzyme",
         required=True,
-        help="The restriction enzyme used in the Hi-C protocol. E.g. DpnII",
+        help="The restriction enzyme used in the Hi-C protocol. E.g. DpnII.",
     )
     parser.add_argument(
         "-r",
         "--reference",
+        type=lambda s: map(str, s.split(",")),
         required=True,
-        help="Path to the reference genome " "in FASTA format.",
+        help="Path to the reference genome in FASTA format. Can be multiple "
+        " files separated by commas.",
     )
     return parser.parse_args()
 
@@ -99,26 +101,45 @@ def get_restriction_table(seq, enz):
     map_restriction = map_restriction[enz]
     map_restriction = [0] + map_restriction
     map_restriction.append(len(seq))
+
     return map_restriction
 
 
-def find_frag(chrm, pos, restriction_table):
+def find_frag(pos, rl):
     """
-    Find the index of a chromosome restriction fragment
+    Use binary search to find the index of a chromosome restriction fragment
+    corresponding to an input genomic position.
     Parameters
     ----------
-    chrm : str
-        The identifier of the chromosome
-    pos: int
-        A genomic position, in base pairs
+    pos : int
+        Genomic position, in base pairs.
+    rl : list
+        List of genomic positions corresponding to restriction sites.
     Returns
     -------
     int
-        The index of the restriction fragment to which the position belongs
+        The 0-based index of the restriction fragment to which the position belongs.
+
+    >>> find_frag(15, [0, 20, 30])
+    0
+    >>> find_frag(15, [10, 20, 30])
+    Traceback (most recent call last):
+        ...
+    ValueError: The first position in the restriction table is not 0.
+    >>> find_frag(31, [0, 20, 30])
+    Traceback (most recent call last):
+        ...
+    ValueError: Read position is larger than last entry in restriction table.
+
     """
-    T = restriction_table[chrm]
+    if rl[0] != 0:
+        raise ValueError("The first position in the restriction table is not 0.")
+    if pos > rl[-1]:
+        raise ValueError(
+            "Read position is larger than last entry in restriction table."
+        )
     bottom = 0  # indice of the first restriction fragment
-    top = len(T) - 1  # indice of the last restriction fragment
+    top = len(rl) - 1  # indice of the last restriction fragment
     found = False
     # binary search for the index of the read
     while not found:
@@ -126,9 +147,9 @@ def find_frag(chrm, pos, restriction_table):
         # if the position of the read is smaller than the position of the current index
         if top == bottom:
             found = True
-        if pos < T[index]:
+        if pos < rl[index]:
             top = index
-        elif pos >= T[index + 1]:
+        elif pos >= rl[index + 1]:
             bottom = index
         else:
             found = True
@@ -137,73 +158,76 @@ def find_frag(chrm, pos, restriction_table):
 
 def write_indices_file(infile, outfile, restriction_table):
     """
-    Writes the output file which corresponds to the input file
-    with 2 more columns, for the restriction fragment index of each read.
+    Writes the "dat.indices" file, which has two more columns than the input
+    file corresponding to the restriction fragment index of each read.
 
     Parameters
     ----------
-    infile: str
-        Path to the input file
-    outfile: str
-        Path to the output file
+    infile: file object
+        File handle for the input .dat file.
+    outfile: file object
+        File handle for the output .dat.indices file.
     restriction_table: dict
         Dictionary with chromosome identifiers (str) as keys and list of
         positions (int) of restriction sites as values.
     """
-    print("Attribution of index to reads.\n")
-    with open(infile, "r") as inf, open(
-        outfile, "w"
-    ) as outf:  # open the file for reading
-        i = 0
-        for line in inf:  # iterate over each line
-            i += 1
-            if i % 5000000 == 0:
-                print(
-                    "{0} million lines have been attributed restriction fragments.".format(
-                        i / 1000000
-                    )
-                )
-            chr1, pos1, sens1, chr2, pos2, sens2 = (
-                line.split()
-            )  # split it by whitespace
-            pos1 = int(pos1)
-            sens1 = int(sens1)
-            pos2 = int(pos2)
-            sens2 = int(sens2)
-
-            indice1 = find_frag(chr1, pos1, restriction_table)
-            indice2 = find_frag(chr2, pos2, restriction_table)
-
-            outf.write(
-                "{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}\n".format(
-                    chr1, pos1, sens1, indice1, chr2, pos2, sens2, indice2
-                )
+    # eye candy progress animation
+    load_anim = ["\\", "|", "/", "-"]
+    prog = 0
+    # Open files for reading and writing
+    i = 0
+    for line in infile:  # iterate over each line
+        i += 1
+        if i % 5000000 == 0:
+            prog += 1
+            print(
+                "Attribution of index to reads: {0}\r".format(load_anim[prog % 4]),
+                end="",
+                file=sys.stderr,
             )
+        chr1, pos1, sens1, chr2, pos2, sens2 = line.split()  # split it by whitespace
+        pos1 = int(pos1)
+        sens1 = int(sens1)
+        pos2 = int(pos2)
+        sens2 = int(sens2)
+
+        indice1 = find_frag(pos1, restriction_table[chr1])
+        indice2 = find_frag(pos2, restriction_table[chr2])
+
+        outfile.write(
+            "{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}\n".format(
+                chr1, pos1, sens1, indice1, chr2, pos2, sens2, indice2
+            )
+        )
 
 
 if __name__ == "__main__":
-    _test()
-    print("Assigns restriction fragment ID to Hi-C records in a .dat file.")
+    print(
+        "Assigns restriction fragment ID to Hi-C records in a .dat file.",
+        file=sys.stderr,
+    )
     args = parse_args()
     # Get arguments
-    input_file = sys.stdin if args.input_file == "-" else args.input_file
-    output_file = args.output_file
+    input_handle = sys.stdin if args.input_file == "-" else open(args.input_file, "r")
+    output_handle = sys.stdout if not args.output_file else open(args.output_file, "w")
     enz = args.enzyme
-    ref = args.reference
+    refs = args.reference
 
     restriction_table = {}
-    with open(ref, "rU") as handle:
-        for rec in SeqIO.parse(handle, "fasta"):
-            chr_name = rec.id
-            # Get the lists of restriction sites of each chromosome into
-            # a restriction_table
-            restriction_table[chr_name] = get_restriction_table(rec.seq, enz)
-            print(
-                "{0}: {1} restriction sites".format(
-                    chr_name, len(restriction_table[chr_name])
+    for ref in refs:
+        with open(ref, "rU") as handle:
+            for rec in SeqIO.parse(handle, "fasta"):
+                chr_name = rec.id
+                # Get the lists of restriction sites of each chromosome into
+                # a restriction_table
+                restriction_table[chr_name] = get_restriction_table(rec.seq, enz)
+                print(
+                    "{0}: {1} restriction sites".format(
+                        chr_name, len(restriction_table[chr_name])
+                    ),
+                    file=sys.stderr,
                 )
-            )
 
     # Associate each read from .dat file with its corresponding restriction
     # fragment index and writes the resulting line
-    write_indices_file(infile, outfile, restriction_table)
+    write_indices_file(input_handle, output_handle, restriction_table)
