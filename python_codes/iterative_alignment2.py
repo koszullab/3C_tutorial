@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Created on Jan 26 2018
-@author: Remi Montagne
-aligns iteratively reads from a 3C fastq file
+@author: Remi Montagne & cmdoret
+Aligns iteratively reads from a 3C fastq file
 """
 
 import argparse
@@ -10,7 +10,7 @@ import os
 import subprocess as sp
 import pysam as ps
 import shutil as st
-from random import randint
+from random import getrandbits
 from threading import Thread
 import compressed_utils as ct
 
@@ -22,13 +22,13 @@ import compressed_utils as ct
 def parse_args():
     """ Gets the arguments from the command line."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("infile1", help="the end1 mate with extension fastq")
-    parser.add_argument("infile2", help="the end2 mate with extension fastq")
+    parser.add_argument("in1_fq", help="The first fastq file containing Hi-C reads.")
+    parser.add_argument("in2_fq", help="The second fastq file containing Hi-C reads.")
     parser.add_argument(
-        "-i",
-        "--index",
+        "-r",
+        "--reference",
         required=True,
-        help="the prefix of the bowtie-built index of " "reference genome",
+        help="Path to the reference genome, in FASTA format.",
     )
     parser.add_argument(
         "-p",
@@ -39,15 +39,28 @@ def parse_args():
     )
     parser.add_argument(
         "-o1",
-        "--outfile1",
-        default="alignement_1",
-        help="name of the outputfile, without extension",
+        "--out1_sam",
+        required=True,
+        help="Path to the output SAM file for the alignment of infile1.",
     )
     parser.add_argument(
         "-o2",
-        "--outfile2",
-        default="alignement_2",
-        help="name of the outputfile, without extension",
+        "--out2_sam",
+        required=True,
+        help="Path to the output SAM file for the alignment of infile2.",
+    )
+    parser.add_argument(
+        "-T",
+        "--tempdir",
+        default=".",
+        help="Directory to write temporary files. Defaults to current directory.",
+    )
+    parser.add_argument(
+        "-m",
+        "--minimap2",
+        default=False,
+        action="store_true",
+        help="Use minimap2 instead of bowtie for the alignment.",
     )
     return parser.parse_args()
 
@@ -55,50 +68,87 @@ def parse_args():
 ##############################
 #        FUNCTIONS
 ##############################
-def generate_temp_dir(infile):
-    """Generates a temporary file named temp by default.
-    If the directory already exists, ask another name."""
-    directory = infile + "temporary"
-    for i in range(5):
-        directory = directory + str(randint(0, 9))
-    directory = directory + "/"
-    if os.path.exists(directory):
-        raise SystemExit("The directory already exists. Please try again.")
-    else:
-        os.makedirs(directory)
-    return directory
+def generate_temp_dir(path):
+    """
+    Generates a temporary file with a random name at the input path.
+    Parameters
+    ----------
+    path : str
+        The path at which the temporary directory will be created.
+    Returns
+    -------
+    str
+        The path of the newly created temporary directory.
+    """
+    exist = True
+    while exist:
+        # Keep trying random directory names if they already exist
+        directory = str(hex(getrandbits(32)))[2:]
+        full_path = os.path.join(path, directory)
+        if not os.path.exists(full_path):
+            exist = False
+    try:
+        os.makedirs(full_path)
+    except PermissionError:
+        raise PermissionError(
+            "I cannot create the temporary directory in {}. "
+            "Make sure you have write permission.".format(path)
+        )
+    return full_path
 
 
-def iterative_align(infile, temp_directory, index, nb_processors, outfile):
-    """Aligns iteratively the reads of infile with bowtie2."""
-    # length of the fragments to align
+def iterative_align(fq_in, tmp_dir, ref, n_cpu, sam_out, minimap2=False):
+    """
+    Aligns reads iteratively reads of fq_in with bowtie2 or minimap2. Reads are
+    truncated to the 20 first nucleotides and unmapped reads are extended by 20
+    nucleotides and realigned on each iteration.
+    Parameters
+    ----------
+    fq_in : str
+        Path to input fastq file to align iteratively.
+    tmp_dir : str
+        Path where temporary files should be written.
+    ref : str
+        Path to the reference genome.
+    n_cpu : int
+        The number of CPUs to use for the iterative alignment.
+    sam_out : str
+        Path where the final alignment should be written in SAM format.
+    minimap2 : bool
+        If True, use minimap2 instead of bowtie2 for the alignment.
+    """
+    # initial length of the fragments to align
     n = 20
-    # prepare the final output file where the alignments will be reported
-    outfile = outfile + ".sam.0"
-    f = open(outfile, "w")
-    f.close()
     # set with the name of the unaligned reads :
-    my_set = set()
+    remaining_reads = set()
     total_reads = 0
 
     # Bowtie only accepts uncompressed fastq: uncompress it into a temp file
-    if ct.is_compressed(infile):
-        uncomp_path = os.path.join(temp_directory, os.path.basename(infile) + ".tmp")
-        with ct.read_compressed(infile) as inf:
+    if not minimap2 and ct.is_compressed(fq_in):
+        uncomp_path = os.path.join(tmp_dir, os.path.basename(fq_in) + ".tmp")
+        with ct.read_compressed(fq_in) as inf:
             with open(uncomp_path, "w") as uncomp:
                 st.copyfileobj(inf, uncomp)
     else:
-        uncomp_path = infile
+        uncomp_path = fq_in
+
+    # Index genome if using bowtie2
+    index = False
+    if not minimap2:
+        index = os.path.join(tmp_dir, os.path.basename(ref))
+        cmd = "bowtie2-build {0} {1}".format(ref, index)
+        sp.call(cmd, shell=True)
 
     # Counting reads
-    with open(uncomp_path, "r") as inf:
+    with ct.read_compressed(uncomp_path) as inf:
         for line in inf:
             total_reads += 1
     total_reads /= 4
 
-    # use first read to guess read length. Stripping newline.
-    with open(uncomp_path, "r") as inf:
+    # Use first read to guess read length.
+    with ct.read_compressed(uncomp_path) as inf:
         size = inf.readline()
+        # Stripping newline.
         size = len(inf.readline().rstrip())
 
     print("{0} reads to parse".format(total_reads))
@@ -110,54 +160,59 @@ def iterative_align(infile, temp_directory, index, nb_processors, outfile):
         # Generate a temporary input fastq file with the n first nucleotids
         # of the reads.
         print("Generating truncated reads")
-        truncated_reads = truncate_reads(temp_directory, uncomp_path, my_set, n)
+        truncated_reads = truncate_reads(tmp_dir, uncomp_path, remaining_reads, n)
 
         # Align the truncated reads on reference genome
         print("Aligning reads")
-        temp_alignment = "{0}/temp_alignment.sam".format(temp_directory)
-        sp.call(
-            "bowtie2 -x {0} -p {1} --rdg 500,3 --rfg 500,3 --quiet \
-             --very-sensitive -S {2} {3}".format(
-                index, nb_processors, temp_alignment, truncated_reads
-            ),
-            shell=True,
-        )
+        temp_alignment = "{0}/temp_alignment.sam".format(tmp_dir)
+        map_args = {
+            "fa": ref,
+            "threads": n_cpu,
+            "sam": temp_alignment,
+            "fq": truncated_reads,
+            "idx": index,
+        }
+        if minimap2:
+            cmd = "minimap2 -x sr -a -t {threads} -O 30,80 {fa} {fq} > {sam}".format(
+                **map_args
+            )
+        else:
+            cmd = "bowtie2 -x {idx} -p {threads} --rdg 500,3 --rfg 500,3 --quiet --very-sensitive -S {sam} {fq}".format(
+                **map_args
+            )
+        sp.call(cmd, shell=True)
 
-        # Sort the reads: the reads whose truncated end was aligned are writen
-        # in the output file.
-        # The reads whose truncated end was not aligned are going to be kept
-        # for the next round.
+        # filter the reads: the reads whose truncated end was aligned are written
+        # to the output file.
+        # The reads whose truncated end was not aligned are kept for the next round.
         print("Reporting aligned reads")
-        my_set = set()
-        my_set = sort_samfile(temp_alignment, outfile, my_set)
+        remaining_reads = filter_samfile(temp_alignment, sam_out)
 
-        # Writes the unaligned reads in a temporary fastq file.
-        # This file will become the input file for the next round.
-        # print('Preparing temporary fastq files of unmapped reads')
-        # infile = get_next_infile(infile, temp_directory, dico, n)
         n += 20
 
     # one last round
     print("\n" + "-" * 10 + "\nn = {0}".format(size))
     print("Generating truncated reads")
-    truncated_reads = truncate_reads(temp_directory, uncomp_path, my_set, size)
+    truncated_reads = truncate_reads(tmp_dir, uncomp_path, remaining_reads, size)
     print("Aligning reads")
-    sp.call(
-        "bowtie2 -x {0} -p {1} --rdg 500,3 --rfg 500,3 --quiet --very-sensitive -S {2} {3}".format(
-            index, nb_processors, temp_alignment, truncated_reads
-        ),
-        shell=True,
-    )
+    if minimap2:
+        cmd = "minimap2 -x sr -a -O 30,80 -t {1} {0} {3} > {2}".format(
+            ref, n_cpu, temp_alignment, truncated_reads
+        )
+    else:
+        cmd = "bowtie2 -x {0} -p {1} --rdg 500,3 --rfg 500,3 --quiet --very-sensitive -S {2} {3}".format(
+            index, n_cpu, temp_alignment, truncated_reads
+        )
+    sp.call(cmd, shell=True)
     print("Reporting aligned reads")
-    my_set = set()
-    my_set = sort_samfile(temp_alignment, outfile, my_set)
+    remaining_reads = filter_samfile(temp_alignment, sam_out)
 
-    remaining = len(my_set)
-    outf = open(outfile, "a")
+    n_remaining = len(remaining_reads)
+    outf = open(sam_out, "a")
     # Report unaligned reads as well
     with ps.AlignmentFile(temp_alignment, "r") as temp_sam:
         for r in temp_sam:
-            if r.query_name in my_set:
+            if r.query_name in remaining_reads:
                 outf.write(
                     "\t".join(
                         [
@@ -173,41 +228,64 @@ def iterative_align(infile, temp_directory, index, nb_processors, outfile):
     outf.close()
     print(
         "{0} reads aligned / {1} total reads.".format(
-            total_reads - remaining, total_reads
+            total_reads - n_remaining, total_reads
         )
     )
 
     return 0
 
 
-def truncate_reads(temp_directory, infile, my_set, n):
-    """Gets the reads from infile and writes the n first
-    nucleotids of each sequence in an auxialiary file in
-    the temporary folder 'directory'."""
+def truncate_reads(tmp_dir, infile, unaligned_set, n):
+    """
+    Writes the n first nucleotids of each sequence in infile to an auxialiary
+    file in the temporary folder.
+    Parameters
+    ----------
+    tmp_dir : str
+        Path to the temporary folder.
+    infile : str
+        Path to the fastq file to truncate.
+    unaligned_set : set
+        Contains the names of all reads that have not been aligned in previous
+        rounds.
+    n : int
+        The number of basepairs to keep in each truncated sequence.
+    str
+        Path to the output fastq file containing truncated reads.
+    """
 
-    outfile = "{0}/truncated.fastq".format(temp_directory)
+    outfile = "{0}/truncated.fastq".format(tmp_dir)
     with ps.FastxFile(infile, "r") as inf, open(outfile, "w") as outf:
         for entry in inf:
-            if entry.name in my_set or n == 20:
+            if entry.name in unaligned_set or n == 20:
                 entry.sequence = entry.sequence[:n]
                 entry.quality = entry.quality[:n]
                 outf.write(str(entry) + "\n")
     return outfile
 
 
-def sort_samfile(temp_alignment, outfile, my_set):
+def filter_samfile(temp_alignment, filtered_out):
     """
     Reads all the reads in the global input file (infile).
-    If they are aligned with a good quality, write them in the global output
-    file (outfile). Else, add their name in the set my_set for the next round
+    Write reads in input to the output file if they are aligned with a good
+    quality . Else, add their name in the set my_set for the next round
     of alignment.
+    Parameters
+    ----------
+    temp_alignment : str
+        Path to the input temporary alignment.
+    outfile : str
+        Path to the output filtered temporary alignment.
+    Returns
+    set:
+        Contains the names reads that did not align with a good quality.
     """
     # Check the quality and status of each aligned fragment.
     # Write the ones with good quality in the final output file.
     # Keep all fragment name and mapping status in a set for next step
     # (see iterative_align())
-
-    outf = open(outfile, "a")
+    bad_reads = set()
+    outf = open(filtered_out, "a")
     with ps.AlignmentFile(temp_alignment, "r") as temp_sam:
         for r in temp_sam:
             if r.flag in [0, 16] and r.mapping_quality >= 30:
@@ -224,11 +302,11 @@ def sort_samfile(temp_alignment, outfile, my_set):
                     + "\n"
                 )
             else:
-                my_set.add(r.query_name)
-        print("{0} reads left to map.".format(len(my_set)))
+                bad_reads.add(r.query_name)
+        print("{0} reads left to map.".format(len(bad_reads)))
     outf.close()
 
-    return my_set
+    return bad_reads
 
 
 ##############################
@@ -236,30 +314,38 @@ def sort_samfile(temp_alignment, outfile, my_set):
 ##############################
 
 
-def main():
+if __name__ == "__main__":
     print("\n" + "-" * 40 + "\nBegining of program\n")
     # Get arguments
     args = parse_args()
-    infile1 = args.infile1
-    infile2 = args.infile2
-    index = args.index
-    nb_processors = args.nb_processors
-    outfile1 = args.outfile1
-    outfile2 = args.outfile2
 
-    # Generates temporary folder
-    temp_directory1 = generate_temp_dir(infile1)
-    temp_directory2 = generate_temp_dir(infile2)
+    # Generates temporary folders
+    temp_directory1 = generate_temp_dir(args.tempdir)
+    temp_directory2 = generate_temp_dir(args.tempdir)
 
     # Aligns iteritatively the fastq file
     print("\n" + "-" * 20 + "\nComputing iterative alignment\n")
     t1 = Thread(
         target=iterative_align,
-        args=(infile1, temp_directory1, index, nb_processors, outfile1),
+        args=(
+            args.in1_fq,
+            temp_directory1,
+            args.reference,
+            args.nb_processors,
+            args.out1_sam,
+            args.minimap2,
+        ),
     )
     t2 = Thread(
         target=iterative_align,
-        args=(infile2, temp_directory2, index, nb_processors, outfile2),
+        args=(
+            args.in2_fq,
+            temp_directory2,
+            args.reference,
+            args.nb_processors,
+            args.out2_sam,
+            args.minimap2,
+        ),
     )
     t1.start()
     t2.start()
@@ -270,7 +356,3 @@ def main():
     st.rmtree(temp_directory1)
     st.rmtree(temp_directory2)
     print("\nEnd of program\n" + "-" * 40 + "\n")
-
-
-if __name__ == "__main__":
-    main()
