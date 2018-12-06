@@ -8,7 +8,6 @@ weirds events, and filter those events.
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-from pylab import *
 import sys
 import argparse
 import pysam as ps
@@ -30,7 +29,6 @@ def parse_args():
         "output_file",
         type=str,
         nargs="?",
-        default=sys.stdout,
         help="Path to the output file (filtered dat.indices). Defaults to stdout.",
     )
     group.add_argument(
@@ -64,8 +62,9 @@ def parse_args():
 
 def process_read_pair(line, sens2type):
     """
-    Takes a record (line) from a dat.indices file as input, reorders the pair so that
-    read 1 in intrachromosomal pairs always has the smallest genomic coordinate.
+    Takes a read pair (line) from a dat.indices file as input, reorders the pair
+    so that read 1 in intrachromosomal pairs always has the smallest genomic
+    coordinate.
     Parameters
     ----------
     line : str
@@ -76,22 +75,23 @@ def process_read_pair(line, sens2type):
     Returns
     -------
     dict
-        Dictionary with reordered pair where each column from the line as an entry.
+        Dictionary with reordered pair where each column from the line as an
+        entry. The number of restriction sites separating reads in the pair and
+        the type of event are also stored in the dictionary, under keys
+        "nsites" and "type".
 
-    >>> process_read_pair("a 1 16 3 b 2 16 4", {(16,16):'--'})
-    {'chr1': 'a',
-     'pos1': 1,
-     'sens1': 16,
-     'indice1': 3,
-     'chr2': 'b',
-     'pos2': 2,
-     'sens2': 16,
-     'indice2': 4,
-     'n_sites': 1,
-     'type': 'inter'}
+    Example
+    -------
+        >>> process_read_pair("a 1 16 3 b 2 16 4", {(16,16):'--'})
+        {'chr1': 'a', 'pos1': 1, 'sens1': 16, 'indice1': 3, 'chr2': 'b', 'pos2': 2, 'sens2': 16, 'indice2': 4, 'nsites': 1, 'type': 'inter'}
     """
     # Split line by whitespace
     p = line.split()
+    if len(p) == 6:
+        raise ValueError(
+            "Your input file has only 6 columns instead of 8. "
+            "Did you use a dat file instead of dat.indices ?"
+        )
     # Saving each column as a dictionary entry with meaningful key
     cols = ["chr1", "pos1", "sens1", "indice1", "chr2", "pos2", "sens2", "indice2"]
     p = {cols[i]: p[i] for i in range(len(cols))}
@@ -107,7 +107,7 @@ def process_read_pair(line, sens2type):
         p["indice1"], p["indice2"] = p["indice2"], p["indice1"]
 
     # Number of restriction sites separating reads in the pair
-    p["n_sites"] = p["indice2"] - p["indice1"]
+    p["nsites"] = p["indice2"] - p["indice1"]
     # Get event type
     if p["chr1"] == p["chr2"]:
         p["type"] = sens2type[(p["sens1"], p["sens2"])]
@@ -126,8 +126,8 @@ def get_thresholds(in_dat, interactive=False):
 
     Parameters
     ----------
-    in_dat: str
-        Path to the input .dat file containing Hi-C pairs
+    in_dat: file object
+        File handle in read mode to the input .dat file containing Hi-C pairs.
     interactive: bool
         If True, plots are diplayed and thresholds are require
     Returns
@@ -140,7 +140,7 @@ def get_thresholds(in_dat, interactive=False):
     thr_loop = None
     max_sites = 500
     n_events = {
-        event: np.zeros((1, max_sites))
+        event: np.zeros(max_sites)
         for event in ["++ (weirds)", "-- (weirds)", "+- (uncuts)", "-+ (loops)"]
     }
     i = 0
@@ -152,19 +152,18 @@ def get_thresholds(in_dat, interactive=False):
         (16, 0): "-+ (loops)",
     }
     # open the file for reading (just the first 1 000 000 lines)
-    with open(in_dat) as f:
-        for line in f:
-            i += 1
-            if i == 1000000:
-                break
-            # Process Hi-C pair into a dictionary
-            p = process_read_pair(line, sens2type)
-            # Type of event and number of restriction site between reads
-            etype = p["type"]
-            nsite = p["nsites"]
-            # Count number of events for intrachrom pairs
-            if etype != "inter" and nsites < max_sites:
-                n_events[etype][nsites] += 1
+    for line in in_dat:
+        i += 1
+        if i == 1000000:
+            break
+        # Process Hi-C pair into a dictionary
+        p = process_read_pair(line, sens2type)
+        # Type of event and number of restriction site between reads
+        etype = p["type"]
+        nsites = p["nsites"]
+        # Count number of events for intrachrom pairs
+        if etype != "inter" and nsites < max_sites:
+            n_events[etype][nsites] += 1
 
     def plot_event(n_events, name):
         plt.xlim([0, 15])
@@ -178,10 +177,10 @@ def get_thresholds(in_dat, interactive=False):
 
     if interactive:
         # PLot:
-        plot_events(n_events, "++ (weirds)")
-        plot_events(n_events, "-- (weirds)")
-        plot_events(n_events, "+- (uncuts)")
-        plot_events(n_events, "-+ (loops)")
+        plot_event(n_events, "++ (weirds)")
+        plot_event(n_events, "-- (weirds)")
+        plot_event(n_events, "+- (uncuts)")
+        plot_event(n_events, "-+ (loops)")
         grid()
         plt.xlabel("Number of restriction fragment(s)")
         plt.ylabel("Number of events")
@@ -191,22 +190,26 @@ def get_thresholds(in_dat, interactive=False):
         # savefig(behavior_file)
         show()
 
-        #  Scanning the alignment file again and count the different events with the determined thresholds:
+        # Asks the user for appropriate thresholds
         thr_uncut = int(input("Enter threshold for the uncuts events (+-):"))
         thr_loop = int(input("Enter threshold for the loops events (-+):"))
     else:
+        # Estimate thresholds from data
+        all_events = np.array(list(n_events.values()))
+        # Compute median occurences at each restriction sites
+        event_med = np.median(all_events, axis=0)
+        # Compute MAD, to have a robust estimator of the expected deviation
+        # from median at long distances
+        mad = np.median(abs(all_events - event_med))
+        exp_stdev = mad / 0.67449
         # Iterate over sites, from furthest to closest
         for site in range(max_sites)[::-1]:
-            expected = (
-                n_events["++ (weirds)"][site] + n_events["-- (weirds)"][site]
-            ) / 2
-            # Rough estimation: Keep the last (closest) site where the number
-            # occurrences of loop/uncut differs from the exp. value by <= 0.1%
-            if abs(n_events["+- (uncuts)"] - expected) <= expected / 1000:
+            # For uncuts and loops, keep the last (closest) site where the
+            # deviation from other events <= expected_stdev
+            if abs(n_events["+- (uncuts)"][site] - event_med[site]) <= exp_stdev:
                 thr_uncut = site
-            if abs(n_events["-+ (loops)"] - expected) <= expected / 1000:
+            if abs(n_events["-+ (loops)"][site] - event_med[site]) <= exp_stdev:
                 thr_loop = site
-            plot_events(n_events, "-+ (loops)")
         if thr_uncut is None or thr_loop is None:
             raise ValueError(
                 "The threshold for loops or uncut could not be estimated. "
@@ -222,10 +225,10 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
     loop thresholds are excluded from the ouput file. All others are written.
     Parameters
     ----------
-    in_dat : str
-        Path to the input "dat" file containing Hi-C pairs.
-    out_filtered : str
-        Path to the output filtered "dat" file.
+    in_dat : file object
+        File handle in read mode to the input "dat" file containing Hi-C pairs.
+    out_filtered : file object
+        File handle in write mode the output filtered "dat" file.
     thr_uncut : int
         Minimum number of restriction sites between reads to keep an
         intrachromosomal +- pair.
@@ -253,41 +256,20 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
     }
     i = 0
     # open the files for reading and writing
-    with open(in_dat, "r") as inf, open(out_filtered, "w") as outf:
-        for line in inf:  # iterate over each line
-            p = process_read_pair(line, sens2type)
-            nsites = indice2 - indice1
-            if chr1 == chr2:
-                if indice1 == indice2 and sens1 == sens2:
-                    n_weirds += 1
-                elif nsites <= thr_loop and (sens1 == 16 and sens2 == 0):
-                    n_loops += 1
-                elif nsites <= thr_uncut and (sens1 == 0 and sens2 == 16):
-                    n_uncuts += 1
-                else:
-                    lrange_intra += 1
-                    outf.write(
-                        str(chr1)
-                        + "\t"
-                        + str(p["pos1"])
-                        + "\t"
-                        + str(p["sens1"])
-                        + "\t"
-                        + str(p["indice1"])
-                        + "\t"
-                        + str(p["chr2"])
-                        + "\t"
-                        + str(p["pos2"])
-                        + "\t"
-                        + str(p["sens2"])
-                        + "\t"
-                        + str(p["indice2"])
-                        + "\n"
-                    )
-            if chr1 != chr2:
-                lrange_inter += 1
-                outf.write(
-                    str(p["chr1"])
+    for line in in_dat:  # iterate over each line
+        p = process_read_pair(line, sens2type)
+        nsites = indice2 - indice1
+        if chr1 == chr2:
+            if indice1 == indice2 and sens1 == sens2:
+                n_weirds += 1
+            elif nsites <= thr_loop and (sens1 == 16 and sens2 == 0):
+                n_loops += 1
+            elif nsites <= thr_uncut and (sens1 == 0 and sens2 == 16):
+                n_uncuts += 1
+            else:
+                lrange_intra += 1
+                out_filtered.write(
+                    str(chr1)
                     + "\t"
                     + str(p["pos1"])
                     + "\t"
@@ -304,14 +286,34 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
                     + str(p["indice2"])
                     + "\n"
                 )
-            if (
-                chr1 in ["CM007981.1", "NC_001224.1", "chrM", "Mito"]
-                and chr2 not in ["CM007981.1", "NC_001224.1", "chrM", "Mito"]
-            ) or (
-                chr2 in ["CM007981.1", "NC_001224.1", "chrM", "Mito"]
-                and chr1 not in ["CM007981.1", "NC_001224.1", "chrM", "Mito"]
-            ):
-                n_mito += 1
+        if chr1 != chr2:
+            lrange_inter += 1
+            out_filtered.write(
+                str(p["chr1"])
+                + "\t"
+                + str(p["pos1"])
+                + "\t"
+                + str(p["sens1"])
+                + "\t"
+                + str(p["indice1"])
+                + "\t"
+                + str(p["chr2"])
+                + "\t"
+                + str(p["pos2"])
+                + "\t"
+                + str(p["sens2"])
+                + "\t"
+                + str(p["indice2"])
+                + "\n"
+            )
+        if (
+            chr1 in ["cm007981.1", "nc_001224.1", "chrm", "mito"]
+            and chr2 not in ["cm007981.1", "nc_001224.1", "chrm", "mito"]
+        ) or (
+            chr2 in ["cm007981.1", "nc_001224.1", "chrm", "mito"]
+            and chr1 not in ["cm007981.1", "nc_001224.1", "chrm", "mito"]
+        ):
+            n_mito += 1
 
     if lrange_inter > 0:
         ratio_inter = float(lrange_inter) / float(lrange_intra + lrange_inter) * 100.0
@@ -408,15 +410,16 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
 
 if __name__ == "__main__":
     args = parse_args()
-    input_file = sys.stdin if args.input_file == "-" else args.input_file
-    output_file = args.output_file
+    # Open reading and writing handles from path or stream
+    input_handle = sys.stdin if args.input_file == "-" else open(args.input_file, "r")
+    output_handle = sys.stdout if not args.output_file else open(args.output_file, "w")
     if args.thresholds:
         # Thresholds supplied by user beforehand
         uncut_thr, loop_thr = args.thresholds
     else:
         # Threshold defined at runtime
-        uncut_thr, loop_thr = get_thresholds(input_file, interactive=args.interactive)
+        uncut_thr, loop_thr = get_thresholds(input_handle, interactive=args.interactive)
     # Filter library and write to output file
     filter_events(
-        input_file, output_file, uncut_thr, loop_thr, plot_events=args.plot_summary
+        input_handle, output_handle, uncut_thr, loop_thr, plot_events=args.plot_summary
     )
