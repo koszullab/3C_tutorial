@@ -1,10 +1,10 @@
 # Tutorial for 3C/Hi-C data processing 
 
 
-This document presents several codes and simple command lines for the processing, vizualisation and primary analysis of 3C/Hi-C datasets.
-These codes were used during the INSERM workshop [Capturing chromosome conformation: toward a 3D view of genome regulation](http://ateliersinserm.dakini.fr/accueil-66-16.php), May 9-13, 2016 in Paris at Pasteur Institut and during the last session of [C3BI Training – Introduction to NGS data analysis] (https://c3bi.pasteur.fr/training-introduction-to-ngs-data-analysis ), 28th of June 2016.
+This document presents several scripts and simple commands for the processing, vizualisation and primary analysis of 3C/Hi-C datasets.
+These scripts were used during the INSERM workshop [Capturing chromosome conformation: toward a 3D view of genome regulation](http://ateliersinserm.dakini.fr/accueil-66-16.php), May 9-13, 2016 in Paris at the Pasteur Institute and during the last session of [C3BI Training – Introduction to NGS data analysis] (https://c3bi.pasteur.fr/training-introduction-to-ngs-data-analysis ), 28th of June 2016.
 
-For queries or help getting these running, you can send email or open an issue at the github repository.
+For queries or help getting these running, you can send an email or open an issue at the github repository.
 
 ### Table of contents
 
@@ -21,14 +21,18 @@ For queries or help getting these running, you can send email or open an issue a
 
 ### Dependencies
 
-Scripts will run on OS X and other Unix-based systems. It basically requires to have Python installed on your machine which is commonly installed on Unix-based systems. 
-For windows, you can have a look to https://www.python.org/downloads/windows/. Then, a few python modules are necessary for diverses operations on arrays and vizualisation. 
+These scripts will run on Unix-based systems such as Linux or OS X. It basically requires to have Python installed on your machine which is commonly installed on Unix-based systems.
+For Windows, you may download Python at https://www.python.org/downloads/windows/. In order to run the Unix commands below, you will need something like Cygwin, Windows Subsystems for Linux, or manually install the command line tools with a package manager like Scoop. Then, a few python modules are necessary for diverses operations on arrays and vizualisation.
 
 #### Python (>=2.7)
 * Numpy
 * Matplotlib (>=1.0)
 * Scipy
 * Biopython
+
+These can be readily installed using the supplied ```requirements.txt``` file:
+
+    pip install -Ur requirements.txt
 
 #### External programs
 
@@ -96,7 +100,7 @@ These lines can be combined in a same bash script and be executed by launching t
 bash script_bash_INSERM.bh
 ```
 
-At this stage, you should have a file containing these information:
+At this stage, you should have a file containing this information:
 ```
 chrX 104115113 16 chr5 169107262 0 
 chr15 64627253 16 chr15 64627696 0 
