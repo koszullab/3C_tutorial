@@ -7,28 +7,30 @@ localrules: all, filter_events
 
 ################################################################################
 # USER CONFIG
-# Change these variables to match datafiles or dependencies path
-# or just the program name if you have them in your PATH
-REF_DIR = 'data/' # Directory containing reference genome
-REF_FILE = 'chr01.fa'
-HIC_FASTQ = 'data/hic.end{mate}.fastq.gz' # path to fastq files containing Hi-C reads. e.g. file.end{mate} if files are file.end1 and file.end2 
+# Change these variables to match datafiles
+SAMPLE = "yGL1635"
+REF_FILE = 'data/chr01.fa'
+TMPDIR = 'data/tmp/'
+OUTDIR = 'data/out/'
+HIC_FASTQ = 'data/hic.end{mate}.fastq.gz' # path to fastq files containing Hi-C reads. e.g. file.end{mate} if files are file.end1 and file.end2
 MATES=["1", "2"]
 ENZYME = "DpnII" # Restriction enzyme used for the Hi-C experiment.
-FILTER_LIBRARY_EVENTS = False
+FILTER_LIBRARY_EVENTS = True
 ################################################################################
 import sys,os
+from datetime import datetime
 print(sys.version)
 
-# Get longest common prefix between fastq files
-SAMPLE_NAME = os.path.basename(os.path.commonprefix(expand(HIC_FASTQ, mate=MATES)))
-BASE_IDX = REF_DIR + 'bowtie/' + REF_FILE
-LOG_FILE = 'data/log/' + SAMPLE_NAME + '_' + REF_FILE + '.log'
+now = datetime.now().isoformat('_', 'seconds').replace('-','')
+LOG_FILE = os.path.join(OUTDIR, 'log', SAMPLE + '_' + now + '.log')
+
+
 def get_final_reads(f):
     # Returns the path to the reads used to generate the matrix
+    ext = '.dat.indices'
     if FILTER_LIBRARY_EVENTS:
-        return 'data/map.dat.indices.filtered'
-    else:
-        return 'data/map.dat.indices'
+        ext +='.filtered'
+    return os.path.join(OUTDIR, SAMPLE + ext)
 
 
 rule all:
@@ -38,7 +40,7 @@ rule all:
 
 rule logging:
     input:
-        aligned = 'data/map.dat',
+        aligned = os.path.join(OUTDIR, '{}.dat'.format(SAMPLE)),
         used = get_final_reads
     output:
         LOG_FILE
@@ -56,37 +58,37 @@ if FILTER_LIBRARY_EVENTS:
     rule filter_events:
         message: "Filter or remove non-chimeric reads. Choose min number of restriction fragments thresholds for -/+ and +/- events."
         input:
-            "data/map.dat.indices"
+            os.path.join(OUTDIR, "{}.dat.indices".format(SAMPLE))
         output:
-            "data/map.dat.indices.filtered"
+            os.path.join(OUTDIR, "{}.dat.indices.filtered".format(SAMPLE))
         shell:
-            "python python_codes/library_events_original.py {input}"
+            "python python_codes/filter_events.py {input} {output}"
 
 rule fragment_attribution:
     params:
-        enzyme = ENZYME, 
-        ref_dir = REF_DIR
+        enz = ENZYME,
+        ref = REF_FILE
     input:
-        'data/map.dat'
+        os.path.join(OUTDIR, '{}.dat'.format(SAMPLE))
     output:
-        'data/map.dat.indices'
+        os.path.join(OUTDIR, '{}.dat.indices'.format(SAMPLE))
     shell:
-        "python python_codes/fragment_attribution.py {input} {params.enzyme} {params.ref_dir}"
+        "python python_codes/fragment_attribution.py -e {params.enz} -r {params.ref} {input} {output}"
 
-rule filter:
+rule filter_MAPQ:
     input:
-        expand('data/map{mate}.sam.0.sorted', mate=MATES)
-    output: 
-        'data/map.dat'
+        expand(os.path.join(TMPDIR, 'map{mate}.sam.0.sorted'), mate=MATES)
+    output:
+        os.path.join(OUTDIR, '{}.dat'.format(SAMPLE))
     shell:
         "paste {input} | awk '{{if($1 eq $6 && $5>= 30 && $10 >= 30) print $2,$4,$3,$7,$9,$8}}' > {output}"
 
 rule sort:
     threads: 8
     input:
-        "data/map{mate}.sam.0"
+        os.path.join(TMPDIR, "map{mate}.sam.0")
     output:
-        temp("data/map{mate}.sam.0.sorted")
+        temp(os.path.join(TMPDIR, "map{mate}.sam.0.sorted"))
     shell:
         "sort -k1 -V --parallel={threads} {input} -T data/tmp > {output}"
 
@@ -94,27 +96,12 @@ rule iterative_mapping:
     message: "{threads} threads allocated for iterative alignment of the following files {input}."
     threads: 8
     params:
-        index = REF_DIR + 'bowtie/' + REF_FILE,
-        base1 = 'data/map' + MATES[0],
-        base2 = 'data/map' + MATES[1]
+        tmp = TMPDIR,
+        ref = REF_FILE,
     input:
-        fastq = expand(HIC_FASTQ, mate=MATES),
-        done_flag = BASE_IDX + '.done'
+        fastq = expand(HIC_FASTQ, mate=MATES)
     output:
-        temp('data/map' + MATES[0] + '.sam.0'),
-        temp('data/map' + MATES[1] + '.sam.0')
+        temp(os.path.join(TMPDIR, 'map' + MATES[0] + '.sam.0')),
+        temp(os.path.join(TMPDIR, 'map' + MATES[1] + '.sam.0'))
     shell:
-        "python python_codes/iterative_alignment2.py {input.fastq} -i {params.index} -p {threads} -o1 {params.base1} -o2 {params.base2}"
-
-rule index_reference:
-    threads: 8
-    params:
-        base_idx = BASE_IDX
-    input:
-        ref = REF_DIR + REF_FILE
-    output:
-        # expand(BASE_IDX + ".{ext}", ext=['1.bt2','2.bt2','3.bt2','4.bt2','rev1.bt2','rev2.bt2'])
-        done_flag = touch(BASE_IDX + '.done')
-    shell:
-        "bowtie2-build {input.ref} {params.base_idx}"
-
+        "python python_codes/iterative_alignment2.py -T {params.tmp} -m -r {params.ref} -p {threads} -o1 {output[0]} -o2 {output[1]} {input.fastq}"
