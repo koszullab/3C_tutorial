@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import sys
+import contextlib
 import argparse
 import pysam as ps
 import os
@@ -22,8 +23,7 @@ def parse_args():
         "input_file",
         type=str,
         help="The file containing the coordinates of Hi-C interacting pairs "
-        "and, the indices of their restriction fragments (.dat.indices format). "
-        "Use '-' to read from stdin.",
+        "and, the indices of their restriction fragments (.dat.indices format).",
     )
     parser.add_argument(
         "output_file",
@@ -167,8 +167,8 @@ def get_thresholds(in_dat, interactive=False):
 
     def plot_event(n_events, name):
         plt.xlim([0, 15])
-        plot(
-            range(1, n_events[name].shape[1] + 1),
+        plt.plot(
+            range(1, n_events[name].shape[0] + 1),
             n_events[name],
             "o-",
             label=name,
@@ -181,18 +181,22 @@ def get_thresholds(in_dat, interactive=False):
         plot_event(n_events, "-- (weirds)")
         plot_event(n_events, "+- (uncuts)")
         plot_event(n_events, "-+ (loops)")
-        grid()
+        plt.grid()
         plt.xlabel("Number of restriction fragment(s)")
         plt.ylabel("Number of events")
         plt.yscale("log")
-        legend()
+        plt.legend()
         # ehavior_file = in_dat.replace(".dat.indices", "_behavior.png")
         # savefig(behavior_file)
-        show()
+        plt.show(block=False)
 
         # Asks the user for appropriate thresholds
-        thr_uncut = int(input("Enter threshold for the uncuts events (+-):"))
-        thr_loop = int(input("Enter threshold for the loops events (-+):"))
+        thr_uncut = int(
+            input("Enter threshold for the \033[92muncuts\033[0m events (+-):")
+        )
+        thr_loop = int(
+            input("Enter threshold for the \033[91mloops\033[0m events (-+):")
+        )
     else:
         # Estimate thresholds from data
         all_events = np.array(list(n_events.values()))
@@ -215,6 +219,10 @@ def get_thresholds(in_dat, interactive=False):
                 "The threshold for loops or uncut could not be estimated. "
                 "Please try running with -i to investigate the problem."
             )
+        print(
+            "Inferred thresholds: uncuts={0} loops={1}".format(thr_uncut, thr_loop),
+            file=sys.stderr,
+        )
     return thr_uncut, thr_loop
 
 
@@ -245,7 +253,6 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
     n_int = 0
     lrange_intra = 0
     lrange_inter = 0
-    n_mito = 0
 
     # Map of sense -> name of event for intrachromosomal pairs.
     sens2type = {
@@ -258,18 +265,17 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
     # open the files for reading and writing
     for line in in_dat:  # iterate over each line
         p = process_read_pair(line, sens2type)
-        nsites = indice2 - indice1
-        if chr1 == chr2:
-            if indice1 == indice2 and sens1 == sens2:
+        if p["chr1"] == p["chr2"]:
+            if p["indice1"] == p["indice2"] and p["sens1"] == p["sens2"]:
                 n_weirds += 1
-            elif nsites <= thr_loop and (sens1 == 16 and sens2 == 0):
+            elif p["nsites"] <= thr_loop and p["type"] == "-+ (loops)":
                 n_loops += 1
-            elif nsites <= thr_uncut and (sens1 == 0 and sens2 == 16):
+            elif p["nsites"] <= thr_uncut and p["type"] == "+- (uncuts)":
                 n_uncuts += 1
             else:
                 lrange_intra += 1
                 out_filtered.write(
-                    str(chr1)
+                    str(p["chr1"])
                     + "\t"
                     + str(p["pos1"])
                     + "\t"
@@ -286,7 +292,7 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
                     + str(p["indice2"])
                     + "\n"
                 )
-        if chr1 != chr2:
+        if p["chr1"] != p["chr2"]:
             lrange_inter += 1
             out_filtered.write(
                 str(p["chr1"])
@@ -306,43 +312,38 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
                 + str(p["indice2"])
                 + "\n"
             )
-        if (
-            chr1 in ["cm007981.1", "nc_001224.1", "chrm", "mito"]
-            and chr2 not in ["cm007981.1", "nc_001224.1", "chrm", "mito"]
-        ) or (
-            chr2 in ["cm007981.1", "nc_001224.1", "chrm", "mito"]
-            and chr1 not in ["cm007981.1", "nc_001224.1", "chrm", "mito"]
-        ):
-            n_mito += 1
 
     if lrange_inter > 0:
-        ratio_inter = float(lrange_inter) / float(lrange_intra + lrange_inter) * 100.0
-        ratio_mito = float(n_mito) / float(lrange_inter) * 100.0
+        ratio_inter = round(100 * lrange_inter / float(lrange_intra + lrange_inter), 2)
     else:
         ratio_inter = 0
-        ratio_mito = 0
 
     # Dump quick summary of operation results into stderr
+    kept = lrange_intra + lrange_inter
+    discarded = n_loops + n_uncuts + n_weirds
     print("Proportion of inter contacts: {}%".format(ratio_inter), file=sys.stderr)
     print(
-        "Pairs discarded: Loops: {0}, Uncuts: {1}, Weirds: {2}".format(
-            n_loops, n_uncuts, n_weirds
+        "{0} pairs discarded: Loops: {1}, Uncuts: {2}, Weirds: {3}".format(
+            discarded, n_loops, n_uncuts, n_weirds
         ),
         file=sys.stderr,
     )
-    print("Pairs kept: {}".format(lrange_intra + lrange_inter), file=sys.stderr)
+    print(
+        "{0} pairs kept ({1}%)".format(kept, round(100 * kept / (kept + discarded), 2)),
+        file=sys.stderr,
+    )
 
     # Visualize summary interactively if requested by user
     if plot_events:
 
         # Plot: make a square figure and axes to plot a pieChart:
-        figure(1, figsize=(6, 6))
-        ax = axes([0.1, 0.1, 0.8, 0.8])
+        plt.figure(1, figsize=(6, 6))
+        ax = plt.axes([0.1, 0.1, 0.8, 0.8])
         # The slices will be ordered and plotted counter-clockwise.
         labels = "Uncuts", "Loops", "Weirds", "3D intra", "3D inter"
         fracs = [n_uncuts, n_loops, n_weirds, lrange_intra, lrange_inter]
         colors = ["salmon", "lightskyblue", "lightcoral", "palegreen", "plum"]
-        pie(
+        plt.pie(
             fracs,
             labels=labels,
             colors=colors,
@@ -350,7 +351,7 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
             shadow=True,
             startangle=90,
         )
-        title("Distribution of library events", bbox={"facecolor": "1.0", "pad": 5})
+        plt.title("Distribution of library events", bbox={"facecolor": "1.0", "pad": 5})
         plt.text(
             0.3,
             1.15,
@@ -385,41 +386,29 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
             -1.4,
             "selected reads = {0}%".format(
                 float(lrange_inter + lrange_intra)
-                / (n_loops + n_uncuts + n_weirds + n_mito + lrange_inter + lrange_intra)
+                / (n_loops + n_uncuts + n_weirds + lrange_inter + lrange_intra)
             ),
             fontdict=None,
             withdash=False,
         )
-        plt.text(
-            -1.6,
-            -1.5,
-            "selected reads = {0}%".format(ratio_mito),
-            fontdict=None,
-            withdash=False,
-        )
-        plt.text(
-            -1.5,
-            -1.6,
-            "Ratio Mito/inter =" + str(ratio_mito) + "%",
-            fontdict=None,
-            withdash=False,
-        )
-        piechart_file = infile.replace(".dat.indices", "_piechart.png")
-        show()
+        plt.show()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    # Open reading and writing handles from path or stream
-    input_handle = sys.stdin if args.input_file == "-" else open(args.input_file, "r")
+    # Open connection for writing
     output_handle = sys.stdout if not args.output_file else open(args.output_file, "w")
     if args.thresholds:
         # Thresholds supplied by user beforehand
         uncut_thr, loop_thr = args.thresholds
     else:
         # Threshold defined at runtime
-        uncut_thr, loop_thr = get_thresholds(input_handle, interactive=args.interactive)
+        with open(args.input_file) as handle_in:
+            uncut_thr, loop_thr = get_thresholds(
+                handle_in, interactive=args.interactive
+            )
     # Filter library and write to output file
-    filter_events(
-        input_handle, output_handle, uncut_thr, loop_thr, plot_events=args.plot_summary
-    )
+    with open(args.input_file) as handle_in:
+        filter_events(
+            handle_in, output_handle, uncut_thr, loop_thr, plot_events=args.plot_summary
+        )
