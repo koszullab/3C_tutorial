@@ -206,17 +206,15 @@ if __name__ == "__main__":
         "Assigns restriction fragment ID to Hi-C records in a .dat file.",
         file=sys.stderr,
     )
-    args = parse_args()
     # Get arguments
-    input_handle = sys.stdin if args.input_file == "-" else open(args.input_file, "r")
-    output_handle = sys.stdout if not args.output_file else open(args.output_file, "w")
+    args = parse_args()
     enz = args.enzyme
     refs = args.reference
 
     restriction_table = {}
     for ref in refs:
-        with open(ref, "rU") as handle:
-            for rec in SeqIO.parse(handle, "fasta"):
+        with open(ref, "rU") as ref_handle:
+            for rec in SeqIO.parse(ref_handle, "fasta"):
                 chr_name = rec.id
                 # Get the lists of restriction sites of each chromosome into
                 # a restriction_table
@@ -230,4 +228,6 @@ if __name__ == "__main__":
 
     # Associate each read from .dat file with its corresponding restriction
     # fragment index and writes the resulting line
+    input_handle = sys.stdin if args.input_file == "-" else open(args.input_file, "r")
+    output_handle = sys.stdout if not args.output_file else open(args.output_file, "w")
     write_indices_file(input_handle, output_handle, restriction_table)
