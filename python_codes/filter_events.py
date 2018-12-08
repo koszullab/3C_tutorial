@@ -166,9 +166,9 @@ def get_thresholds(in_dat, interactive=False):
             n_events[etype][nsites] += 1
 
     def plot_event(n_events, name):
-        plt.xlim([0, 15])
+        plt.xlim([-0.5, 15])
         plt.plot(
-            range(1, n_events[name].shape[0] + 1),
+            range(n_events[name].shape[0]),
             n_events[name],
             "o-",
             label=name,
@@ -186,20 +186,25 @@ def get_thresholds(in_dat, interactive=False):
         plt.ylabel("Number of events")
         plt.yscale("log")
         plt.legend()
-        # ehavior_file = in_dat.replace(".dat.indices", "_behavior.png")
-        # savefig(behavior_file)
         plt.show(block=False)
 
         # Asks the user for appropriate thresholds
+        print(
+            "Please enter the number of restriction fragments separating "
+            "reads in a Hi-C pair below which \033[91mloops\033[0m and "
+            "\033[92muncuts\033[0m events will be excluded\n",
+            file=sys.stderr,
+        )
         thr_uncut = int(
             input("Enter threshold for the \033[92muncuts\033[0m events (+-):")
         )
         thr_loop = int(
             input("Enter threshold for the \033[91mloops\033[0m events (-+):")
         )
+        plt.clf()
     else:
         # Estimate thresholds from data
-        all_events = np.array(list(n_events.values()))
+        all_events = np.log(np.array(list(n_events.values())))
         # Compute median occurences at each restriction sites
         event_med = np.median(all_events, axis=0)
         # Compute MAD, to have a robust estimator of the expected deviation
@@ -210,9 +215,12 @@ def get_thresholds(in_dat, interactive=False):
         for site in range(max_sites)[::-1]:
             # For uncuts and loops, keep the last (closest) site where the
             # deviation from other events <= expected_stdev
-            if abs(n_events["+- (uncuts)"][site] - event_med[site]) <= exp_stdev:
+            if (
+                abs(np.log(n_events["+- (uncuts)"][site]) - event_med[site])
+                <= exp_stdev
+            ):
                 thr_uncut = site
-            if abs(n_events["-+ (loops)"][site] - event_med[site]) <= exp_stdev:
+            if abs(np.log(n_events["-+ (loops)"][site]) - event_med[site]) <= exp_stdev:
                 thr_loop = site
         if thr_uncut is None or thr_loop is None:
             raise ValueError(
@@ -268,9 +276,9 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
         if p["chr1"] == p["chr2"]:
             if p["indice1"] == p["indice2"] and p["sens1"] == p["sens2"]:
                 n_weirds += 1
-            elif p["nsites"] <= thr_loop and p["type"] == "-+ (loops)":
+            elif p["nsites"] < thr_loop and p["type"] == "-+ (loops)":
                 n_loops += 1
-            elif p["nsites"] <= thr_uncut and p["type"] == "+- (uncuts)":
+            elif p["nsites"] < thr_uncut and p["type"] == "+- (uncuts)":
                 n_uncuts += 1
             else:
                 lrange_intra += 1
