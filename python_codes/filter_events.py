@@ -71,7 +71,7 @@ def process_read_pair(line, sens2type):
         Read pair from a dat.indices file.
     sens2type : dict
         Dictionary with entries mapping a tuple of int (sens1, sens2) to the
-        name of the event type. e.g (16, 16): '-- (weirds)'.
+        name of the event type. e.g ('-', '-'): '-- (weirds)'.
     Returns
     -------
     dict
@@ -82,8 +82,8 @@ def process_read_pair(line, sens2type):
 
     Example
     -------
-        >>> process_read_pair("a 1 16 3 b 2 16 4", {(16,16):'--'})
-        {'chr1': 'a', 'pos1': 1, 'sens1': 16, 'indice1': 3, 'chr2': 'b', 'pos2': 2, 'sens2': 16, 'indice2': 4, 'nsites': 1, 'type': 'inter'}
+        >>> process_read_pair("a 1 - 3 b 2 - 4", {('-','-'):'--'})
+        {'chr1': 'a', 'pos1': 1, 'sens1': '-', 'indice1': 3, 'chr2': 'b', 'pos2': 2, 'sens2': '-', 'indice2': 4, 'nsites': 1, 'type': 'inter'}
     """
     # Split line by whitespace
     p = line.split()
@@ -96,7 +96,7 @@ def process_read_pair(line, sens2type):
     cols = ["chr1", "pos1", "sens1", "indice1", "chr2", "pos2", "sens2", "indice2"]
     p = {cols[i]: p[i] for i in range(len(cols))}
     # Transforming numeric columns to int
-    for col in ["pos1", "sens1", "indice1", "pos2", "sens2", "indice2"]:
+    for col in ["pos1", "indice1", "pos2", "indice2"]:
         p[col] = int(p[col])
 
     # invert records for intrachromosomal pairs where rec2 comes before
@@ -146,10 +146,10 @@ def get_thresholds(in_dat, interactive=False):
     i = 0
     # Map of sense -> name of event for intrachromosomal pairs.
     sens2type = {
-        (0, 0): "++ (weirds)",
-        (16, 16): "-- (weirds)",
-        (0, 16): "+- (uncuts)",
-        (16, 0): "-+ (loops)",
+        ("+", "+"): "++ (weirds)",
+        ("-", "-"): "-- (weirds)",
+        ("+", "-"): "+- (uncuts)",
+        ("-", "+"): "-+ (loops)",
     }
     # open the file for reading (just the first 1 000 000 lines)
     for line in in_dat:
@@ -264,10 +264,10 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
 
     # Map of sense -> name of event for intrachromosomal pairs.
     sens2type = {
-        (0, 0): "++ (weirds)",
-        (16, 16): "-- (weirds)",
-        (0, 16): "+- (uncuts)",
-        (16, 0): "-+ (loops)",
+        ("+", "+"): "++ (weirds)",
+        ("-", "-"): "-- (weirds)",
+        ("+", "-"): "+- (uncuts)",
+        ("-", "+"): "-+ (loops)",
     }
     i = 0
     # open the files for reading and writing

@@ -187,9 +187,9 @@ def write_indices_file(infile, outfile, restriction_table):
             )
         chr1, pos1, sens1, chr2, pos2, sens2 = line.split()  # split it by whitespace
         pos1 = int(pos1)
-        sens1 = int(sens1)
+        sens1 = sens1
         pos2 = int(pos2)
-        sens2 = int(sens2)
+        sens2 = sens2
 
         indice1 = find_frag(pos1, restriction_table[chr1])
         indice2 = find_frag(pos2, restriction_table[chr2])

@@ -8,7 +8,7 @@ localrules: all, filter_events
 ################################################################################
 # USER CONFIG
 # Change these variables to match datafiles
-SAMPLE = "yGL1635"
+SAMPLE = "test_run"
 REF_FILE = 'data/chr01.fa'
 TMPDIR = 'data/tmp/'
 OUTDIR = 'data/out/'
@@ -39,6 +39,7 @@ rule all:
 
 
 rule logging:
+# Keep useful summary statistics of the run into a "log" file.
     input:
         aligned = os.path.join(OUTDIR, '{}.dat'.format(SAMPLE)),
         used = get_final_reads
@@ -54,17 +55,20 @@ rule logging:
 
 
 if FILTER_LIBRARY_EVENTS:
-
+# If desired, filter spurious library events (loops and uncuts). This makes
+# the matrix more readable by reducing the diagonal intensity.
     rule filter_events:
-        message: "Filter or remove non-chimeric reads. Choose min number of restriction fragments thresholds for -/+ and +/- events."
+        message: "Filter or remove non-chimeric reads. Choose min number of "
+                 "restriction fragments thresholds for -/+ and +/- events."
         input:
             os.path.join(OUTDIR, "{}.dat.indices".format(SAMPLE))
         output:
             os.path.join(OUTDIR, "{}.dat.indices.filtered".format(SAMPLE))
         shell:
-            "python python_codes/filter_events.py {input} {output}"
+            "python python_codes/filter_events.py -i {input} {output}"
 
 rule fragment_attribution:
+# Attributes each read to the corresponding restriction fragment.
     params:
         enz = ENZYME,
         ref = REF_FILE
@@ -75,33 +79,50 @@ rule fragment_attribution:
     shell:
         "python python_codes/fragment_attribution.py -e {params.enz} -r {params.ref} {input} {output}"
 
-rule filter_MAPQ:
+rule paste_filter:
+# Merge sorted reads into Hi-C pairs and remove pairs where at least one read
+# map ambiguously.
+    threads: 2
     input:
-        expand(os.path.join(TMPDIR, 'map{mate}.sam.0.sorted'), mate=MATES)
+        expand(os.path.join(TMPDIR, 'map{mate}.sorted.sam'), mate=MATES)
     output:
         os.path.join(OUTDIR, '{}.dat'.format(SAMPLE))
     shell:
-        "paste {input} | awk '{{if($1 eq $6 && $5>= 30 && $10 >= 30) print $2,$4,$3,$7,$9,$8}}' > {output}"
+        """
+        paste <(awk -v OFS="\t" '{{if($2 == 0) {{$2 = "+"}}
+                                   else {{$2 = "-"}}
+                                   print $3, $4, $5, $2}}' {input[0]}) \
+              <(awk -v OFS="\t" '{{if($2 == 0) {{$2 = "+"}}
+                                   else {{$2 = "-"}}
+                                   print $3, $4, $5, $2}}' {input[1]}) \
+          | awk '{{if($1 == $5 && $3 >= 30 && $7 >= 30) print $1, $2, $4, $5, $6, $8}}'> {output}
+        """
 
-rule sort:
+rule sort_bed:
+# Sort reads by chromosome and position and remove potential supplementary
+# alignments in case of chimeric reads, to allow merging them into pairs later.
     threads: 8
+    params:
+        mate = "{mate}"
     input:
-        os.path.join(TMPDIR, "map{mate}.sam.0")
+        os.path.join(TMPDIR, "map{mate}.sam")
     output:
-        temp(os.path.join(TMPDIR, "map{mate}.sam.0.sorted"))
+        os.path.join(TMPDIR, "map{mate}.sorted.sam")
     shell:
-        "sort -k1 -V --parallel={threads} {input} -T data/tmp > {output}"
+        "samtools sort -n -@ {threads} {input} \
+           | samtools view -@ {threads} > {output}"
 
 rule iterative_mapping:
+# Truncates reads to 20bp, attempts mapping and extend the reads by 20 bp iteratively.
+# This allows to keep reads containing a ligation site.
     message: "{threads} threads allocated for iterative alignment of the following files {input}."
     threads: 8
     params:
         tmp = TMPDIR,
         ref = REF_FILE,
     input:
-        fastq = expand(HIC_FASTQ, mate=MATES)
+        fastq = HIC_FASTQ
     output:
-        temp(os.path.join(TMPDIR, 'map' + MATES[0] + '.sam.0')),
-        temp(os.path.join(TMPDIR, 'map' + MATES[1] + '.sam.0'))
+        os.path.join(TMPDIR, 'map{mate}.sam')
     shell:
-        "python python_codes/iterative_alignment2.py -T {params.tmp} -m -r {params.ref} -p {threads} -o1 {output[0]} -o2 {output[1]} {input.fastq}"
+        "python python_codes/iterative_alignment2.py -T {params.tmp} -r {params.ref} -p {threads} -o {output} {input.fastq} -l 40"
