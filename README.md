@@ -24,11 +24,13 @@ For queries or help getting these running, you can send an email or open an issu
 These scripts will run on Unix-based systems such as Linux or OS X. It basically requires to have Python installed on your machine which is commonly installed on Unix-based systems.
 For Windows, you may download Python at https://www.python.org/downloads/windows/. In order to run the Unix commands below, you will need something like Cygwin, Windows Subsystems for Linux, or manually install the command line tools with a package manager like Scoop. Then, a few python modules are necessary for diverses operations on arrays and vizualisation.
 
-#### Python (>=2.7)
+#### Python (>=3.6)
 * Numpy
-* Matplotlib (>=1.0)
+* Matplotlib
+* pysam
 * Scipy
 * Biopython
+* snakemake
 
 These can be readily installed using the supplied ```requirements.txt``` file:
 
@@ -36,123 +38,189 @@ These can be readily installed using the supplied ```requirements.txt``` file:
 
 #### External programs
 
-* `SRA tool` / [SRA](http://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?cmd=show&f=software&m=software&s=software)
-* `Bowtie2 ` / [bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/index.shtml)
-
+* [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/index.shtml)
+* [minimap2](https://github.com/lh3/minimap2)
+* [samtools](http://www.htslib.org/)
 ## Raw data extraction and alignment
-#### Data extraction
-As example, we will use raw data that are deposited on Short Read Archive server at the following address **http://www.ncbi.nlm.nih.gov/sra**.
-We take as example one run of the replicat 2 of IMR90 from [Dixon et al. Nature 2012] (http://www.nature.com/nature/journal/v485/n7398/full/nature11082.html). Raw data can be retreived at  http://www.ncbi.nlm.nih.gov/sra/SRX212173 (the identification number is SRR639031).
+#### Data
+A minimal test dataset is provided in the `data` folder. It consists of a reference fasta file and two fastq files containing the pairs of Hi-C reads.
 
-We used an SRA executable called fastq-dump from SRA to extract and split both mates of a library (to use it, you can go with your terminal to the directory containg the executables files by using the bash command cd).Then the program can be used like this:  /fastq-dump library_identification --split-3 -O /path_to_a_directory
+#### Pipeline overview
+The whole pipeline is implemented in a [Snakefile](https://snakemake.readthedocs.io/en/stable/) where file path and variables can easily be changed in the "USER CONFIG" section. Each step of the pipeline is described individually below.
+
+You can run the whole pipeline at once using :
 
 ```bash
-./fastq-dump SRR639031 --split-3 -O /run/media/axel/RSG3/IMR90_data/
+# change the value of -j to the number of cores on your machine
+snakemake -j8
 ```
 
 
 #### Alignment
+The python script `iterative_alignment2.py` performs iterative mapping by first truncating the reads to a given length (20bp by default) and then iteratively extending and remapping the reads that did not map uniquely. This allows to map reads that would otherwise have a ligation site in the middle. Running `python python_codes/iterative_alignment2.py -h` shows the different arguments it can take.
 
-For the alignement step, we will use the sofware Bowtie2. Before aligning the reads on a reference genome, it is necessary to index it, the line to enter is as follows: bowtie2-build [list of fasta files of your genome separated by comma] [name of index you want to give].
+```
+usage: iterative_alignment2.py [-h] -r REFERENCE [-p NB_PROCESSORS]
+                               [-o OUT_SAM] [-T TEMPDIR] [-m] [-l MIN_LEN]
+                               in_fq
+
+positional arguments:
+  in_fq                 The fastq file containing Hi-C reads.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -r REFERENCE, --reference REFERENCE
+                        Path to the reference genome, in FASTA format.
+  -p NB_PROCESSORS, --nb_processors NB_PROCESSORS
+                        number of CPUs used for alignment.
+  -o OUT_SAM, --out_sam OUT_SAM
+                        Path to the output SAM file for the alignment of
+                        in_fq.
+  -T TEMPDIR, --tempdir TEMPDIR
+                        Directory to write temporary files. Defaults to
+                        current directory.
+  -m, --minimap2        Use minimap2 instead of bowtie for the alignment.
+  -l MIN_LEN, --min_len MIN_LEN
+                        Minimum length to which reads should be truncated.
+```
+For example:
 
 ```bash
-bowtie2-build chr10.fa,chr11.fa,chr11_gl000202_random.fa,chr12.fa,chr13.fa,chr14.fa,chr15.fa,chr16.fa,chr17_ctg5_hap1.fa,chr17.fa,chr17_gl000203_random.fa,chr17_gl000204_random.fa,chr17_gl000205_random.fa,chr17_gl000206_random.fa,chr18.fa,chr18_gl000207_random.fa,chr19.fa,chr19_gl000208_random.fa,chr19_gl000209_random.fa,chr1.fa,chr1_gl000191_random.fa,chr1_gl000192_random.fa,chr20.fa,chr21.fa,chr21_gl000210_random.fa,chr22.fa,chr2.fa,chr3.fa,chr4_ctg9_hap1.fa,chr4.fa,chr4_gl000193_random.fa,chr4_gl000194_random.fa,chr5.fa,chr6_apd_hap1.fa,chr6_cox_hap2.fa,chr6_dbb_hap3.fa,chr6.fa,chr6_mann_hap4.fa,chr6_mcf_hap5.fa,chr6_qbl_hap6.fa,chr6_ssto_hap7.fa,chr7.fa,chr7_gl000195_random.fa,chr8.fa,chr8_gl000196_random.fa,chr8_gl000197_random.fa,chr9.fa,chr9_gl000198_random.fa,chr9_gl000199_random.fa,chr9_gl000200_random.fa,chr9_gl000201_random.fa,chrM.fa,chrUn_gl000211.fa,chrUn_gl000212.fa,chrUn_gl000213.fa,chrUn_gl000214.fa,chrUn_gl000215.fa,chrUn_gl000216.fa,chrUn_gl000217.fa,chrUn_gl000218.fa,chrUn_gl000219.fa,chrUn_gl000220.fa,chrUn_gl000221.fa,chrUn_gl000222.fa,chrUn_gl000223.fa,chrUn_gl000224.fa,chrUn_gl000225.fa,chrUn_gl000226.fa,chrUn_gl000227.fa,chrUn_gl000228.fa,chrUn_gl000229.fa,chrUn_gl000230.fa,chrUn_gl000231.fa,chrUn_gl000232.fa,chrUn_gl000233.fa,chrUn_gl000234.fa,chrUn_gl000235.fa,chrUn_gl000236.fa,chrUn_gl000237.fa,chrUn_gl000238.fa,chrUn_gl000239.fa,chrUn_gl000240.fa,chrUn_gl000241.fa,chrUn_gl000242.fa,chrUn_gl000243.fa,chrUn_gl000244.fa,chrUn_gl000245.fa,chrUn_gl000246.fa,chrUn_gl000247.fa,chrUn_gl000248.fa,chrUn_gl000249.fa,chrX.fa,chrY.fa hg19
+python python_codes/iterative_alignment2.py \
+  -r data/chr01.fa
+  -o end1.sam data/hic.end1.fastq.gz
 ```
-You can also download the most used indexes on the following link: **http://bowtie-bio.sourceforge.net/bowtie2/index.shtml**
 
-We align the raw reads with the software bowtie2 with several options. Information can be found in the following reference manual (**http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml**).
+The script needs to be run separately on both fastq files and each will return a SAM file containing each read once, including those that are not aligned.
 
-Examples of lines used to do the alignment procedure:
-```bash
-bowtie2 -x /run/media/axel/human_index_downloaded/hg19 -p6 --sam-no-hd --sam-no-sq --quiet --local --very-sensitive-local -S p1.sam SRR639031_1.fastq
-
-bowtie2 -x /run/media/axel/human_index_downloaded/hg19 -p6 --sam-no-hd --sam-no-sq --quiet --local --very-sensitive-local -S p2.sam SRR639031_2.fastq
-```
-Remark: We could have also aligned the reads with an iterative alignment procedure like in [hiclib] (https://bitbucket.org/mirnylab/hiclib). In this procedure, each read starts with a fixed lenght (i.e 20 bp), the aligner tries to find a correct (unambiguous) location. If the read can be correctly aligned, it is kept else the length is incremented (i.e by 5 bp) until a correct mapping can be found.
-It is important to align each mate idependently and then repair them  (Bowtie expects a certain distribution of distances between mates so the "pairs mode" of Bowtie is not recommanded for Hi-C data).
-Here, some lines that can be used to do this latter task:
+The SAM files must then be sorted by read name, and the header remove to facilitate parsing. This can be achieved using the `samtools` utilities.
 
 ```bash
-#  Keeping only the columns of the sam file that contain necessary information:
-awk '{print $1,$3,$4,$2,$5;}' p1.sam > p1.sam.0
-awk '{print $1,$3,$4,$2,$5;}' p2.sam > p2.sam.0
-
-# Sort according to the read identification to have both mates in the same order
-# if sort does not have -V option try -d
-sort -V -k1 p1.sam.0 > p1.sam.0.sorted
-sort -V -k1 p2.sam.0 > p2.sam.0.sorted
-
-# Pairing of both mates in a single file
-paste p1.sam.0.sorted p2.sam.0.sorted > p1_p2_merged
-
-# Removal of intermediar files
-rm p1.sam.0.sorted
-rm p2.sam.0.sorted
-
-# Filtering of paires of reads that both have a Mapping Quality above 30
-awk '{if($1 eq $6 && $5>= 30 && $10 >= 30) print $2,$3,$4,$7,$8,$9}'  p1_p2_merged  > output_alignment_idpt.dat
-
-# Removal of intermediar file
-rm p1_p2_merged
+samtools sort -n end1.sam | samtools view > end1.sorted.sam
+samtools sort -n end2.sam | samtools view > end2.sorted.sam
 ```
-These lines can be combined in a same bash script and be executed by launching the script [`script_bash_INSERM.bh`](bash_lines/script_bash_INSERM.bh):
+
+#### Pairing reads
+The sam files can then be parsed and combined into a single file using the GNU coreutils suite of tools to match reads of the same pair. We also filter pairs where both reads have a mapping quality above 30.
+
 ```bash
-bash script_bash_INSERM.bh
+paste <(awk -v OFS="\t" '{if($2 == 0) {$2 = "+"}
+                           else {$2 = "-"}
+                           print $3, $4, $5, $2}' end1.sorted.sam) \
+      <(awk -v OFS="\t" '{if($2 == 0) {$2 = "+"}
+                           else {$2 = "-"}
+                           print $3, $4, $5, $2}' end2.sorted.sam) \
+  | awk '{if($3 >= 30 && $7 >= 30)
+            print $1, $2, $4, $5, $6, $8}' > pairs.dat
+
 ```
+The SAM flags 0 and 16 are converted into + and - strands, respectively and the reads are ordered into a convenient table with one pair per line. For each read, the chromosome, position and strand informations are present.
+
 
 At this stage, you should have a file containing this information:
 ```
-chrX 104115113 16 chr5 169107262 0
-chr15 64627253 16 chr15 64627696 0
-chr1 9155504 16 chr10 77551370 16
-chr20 36390507 0 chr15 48945063 0
-chrX 134656481 0 chrX 134656772 16
-chr4 127660544 16 chr1 7470584 0
-chr5 137488897 0 chr9 27468101 0
-chr3 178179845 0 chr3 171257372 16
+Sc_chr01 54412 - Sc_chr01 54276 +
+Sc_chr01 52956 + Sc_chr01 45745 +
+Sc_chr01 69448 - Sc_chr01 69297 +
+Sc_chr01 79289 - Sc_chr01 79177 +
+Sc_chr01 38824 + Sc_chr01 36185 -
+Sc_chr01 131720 + Sc_chr01 131874 -
+Sc_chr01 195698 - Sc_chr01 195459 +
+Sc_chr01 138110 + Sc_chr01 138287 -
+
 ```
 
-The 3rd and 6th fields correspond to the directions of the reads: 0 means in the same direction of the reference genome, 16 means in the opposite direction.
-You can also assign a restriction fragment to each locus using the python code [`fragment_attribution.py`](python_codes/fragment_attribution.py):
+You can then assign a restriction fragment to each read using the python code [`fragment_attribution.py`](python_codes/fragment_attribution.py):
 
-The command to enter to use it is:
+```
+Assigns restriction fragment ID to Hi-C records in a .dat file.
+usage: fragment_attribution.py [-h] -e ENZYME -r REFERENCE
+                               input_file [output_file]
 
-python fragment_attribution.py [path of fasta files of the genome] [Restriction enzyme]  [Alignment file]
+positional arguments:
+  input_file            Path to the input file containing the coordinates of
+                        Hi-C interacting pairs (dat format). Use '-' to read
+                        from stdin.
+  output_file           Path to the output file (dat.indices format). Defaults
+                        to stdout.
 
-Ex:
+optional arguments:
+  -h, --help            show this help message and exit
+  -e ENZYME, --enzyme ENZYME
+                        The restriction enzyme used in the Hi-C protocol. E.g.
+                        DpnII.
+  -r REFERENCE, --reference REFERENCE
+                        Path to the reference genome in FASTA format. Can be
+                        multiple files separated by commas.
+
+```
+
+For example
 ```bash
-python fragment_attribution.py /run/media/axel/RSG3/human_genome/ HindIII /run/media/axel/RSG3/IMR90_data/output_alignment_idpt.dat
+python python_codes/fragment_attribution.py \
+  -e DpnII \
+  -r data/chr01.fa \
+  pairs.dat \
+  pairs.dat.indices
 ```
-Fasta files for different chromosomes must have the possible following extentions: .fa, .fasta, .fas or fna.
-The indices start at 0 for every chromosome, you should have a file now containing the indices in 4th and 8th columns:
+
+This will output a file with two additional column (4th and 8th) containing the indices of the restriction fragments on which the reads are located.
+
 ```
-chrX	104115113	16	29877	chr5	169107262	0	52159
-chr15	64627253	16	12632	chr15	64627696	0	12632
-chr1	9155504	16	1806	chr10	77551370	16	21377
-chr20	36390507	0	8974	chr15	48945063	0	7863
-chrX	134656481	0	39113	chrX	134656772	16	39113
-chr4	127660544	16	38703	chr1	7470584	0	1411
-chr5	137488897	0	42558	chr9	27468101	0	8715
-chr3	178179845	0	53834	chr3	171257372	16	51648
+Sc_chr01	1665	+	4	Sc_chr01	1838	-	4
+Sc_chr01	157259	+	437	Sc_chr01	157541	-	437
+Sc_chr01	107877	-	290	Sc_chr01	126038	-	343
+Sc_chr01	68529	-	184	Sc_chr01	68276	+	184
+Sc_chr01	81348	+	215	Sc_chr01	81527	-	215
+Sc_chr01	126315	+	344	Sc_chr01	121347	+	326
+
 ```
 
 #### Filtering of the data
 A check for the proportion of uncrosslinked events (uncuts, loops...) can be carried out at this stage.  
 With these information, one can remove uninformative events more cautiously then just removing all events below 10 kb. This filtering is optional and might be necessary when you want to study the structure of chromatin at very short scales like several kb.
-We used the home-made python code [`library_events.py`](python_codes/library_events.py):
-```bash
-python library_events.py /run/media/axel/RSG3/IMR90_data/output_alignment_idpt.dat.indices
+We used the home-made python code [`filter_events.py`](python_codes/filter_events.py):
+
+```
+usage: filter_events.py [-h] [-i | -t THRESHOLDS THRESHOLDS] [-p]
+                        input_file [output_file]
+
+positional arguments:
+  input_file            The file containing the coordinates of Hi-C
+                        interacting pairs and, the indices of their
+                        restriction fragments (.dat.indices format).
+  output_file           Path to the output file (filtered dat.indices).
+                        Defaults to stdout.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -i, --interactive     Interactively shows plots and asks the user for
+                        thresholds. Overrides predefined thresholds. Disabled
+                        by default.
+  -t THRESHOLDS THRESHOLDS, --thresholds THRESHOLDS THRESHOLDS
+                        The minimum number of restriction fragments between
+                        reads to consider loops and uncut events. Estimated
+                        automatically by default. Must be two integers
+                        separated by a space (-t <loop> <uncut>).
+  -p, --plot_summary    Output a piechart summarizing library composition.
+
 ```
 
+For example:
+```bash
+python filter_events.py pairs.dat.indices pairs.dat.indices.filtered
+```
+
+By default, the program will automatically estimate a threshold to remove loop and uncut events. This threshold represents the minimum number of restriction fragments separating reads in a Hi-C pair. This can be done interactively using the `-i` flag and the proportion of each type of library events can also be displayed using the `-p` flag.
 
 You can have a look to the behaviors of the different pairs of reads taking into account the directions of the reads with this kind of plots:
 
-![alt tag](https://github.com/axelcournac/3C_analysis_tools/blob/master/pictures/behavior_events_annotated.png)
+![alt tag](https://github.com/koszullab/3C_analysis_tools/blob/master/pictures/behavior_events_annotated.png)
 
 At this step, close the window, the program will ask you the two thresholds for the uncuts and loops events that you can determine from the previous plot.
 Then, the code counts the different types of events, it gives information about the quality of your library preparation.
 
-![alt tag](https://github.com/axelcournac/3C_analysis_tools/blob/master/pictures/PieChart_events.png)
+![alt tag](https://github.com/koszullab/3C_analysis_tools/blob/master/pictures/PieChart_events.png)
 
 A file where non-crosslinked events have been removed is created and name output_alignment_idpt.dat.indices.filtered.
 
@@ -163,7 +231,7 @@ There are two arguments to enter: the path of your output alignment file and the
 
 Ex:
 ```bash
-python Matrice_Creator.py /run/media/axel/RSG3/IMR90_data/output_alignment_idpt.dat.indices.filtered  1000000
+python Matrice_Creator.py pairs.indices.filtered  1000000
 ```
 
 You should have a picture with all the chromosomes :
@@ -370,19 +438,3 @@ savefig('4Cplot_chr3.png');
 ```
 Example of 4C plot from the normalised contacts map for the position 37000000 bp on the chromosome 3:
 ![alt tag](https://github.com/axelcournac/3C_analysis_tools/blob/master/pictures/4Cplot_chr3.png)
-
-# FINISH AND CHECK INDEXING CONVENTION
-## File naming conventions
-All tools described here rely on simple tabular files. Here are the naming and
-formatting conventions we use. In all files, positions are 0-indexed and columns are tab-separated.
-
-### dat files
-Each line describes a Hi-C pair composed of two reads (A and B). Columns are:
-**chromA posA senseA chromB posB senseB**
-
-### dat.indices files
-Same as the dat files with two additional columns. These columns represent the index of each read's restriction fragment in the genome. Columns are:
-**chromA posA senseA fragidA chromB posB senseB fragidB**
-
-### mat files
-These files are the Hi-C matrices.
