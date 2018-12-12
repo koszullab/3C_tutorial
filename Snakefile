@@ -65,7 +65,7 @@ if FILTER_LIBRARY_EVENTS:
         output:
             os.path.join(OUTDIR, "{}.dat.indices.filtered".format(SAMPLE))
         shell:
-            "python python_codes/filter_events.py -i {input} {output}"
+            "python python_codes/filter_events.py -p -i {input} {output}"
 
 rule fragment_attribution:
 # Attributes each read to the corresponding restriction fragment.
@@ -95,7 +95,7 @@ rule paste_filter:
               <(awk -v OFS="\t" '{{if($2 == 0) {{$2 = "+"}}
                                    else {{$2 = "-"}}
                                    print $3, $4, $5, $2}}' {input[1]}) \
-          | awk '{{if($1 == $5 && $3 >= 30 && $7 >= 30) print $1, $2, $4, $5, $6, $8}}'> {output}
+          | awk '{{if($3 >= 30 && $7 >= 30) print $1, $2, $4, $5, $6, $8}}'> {output}
         """
 
 rule sort_bed:
