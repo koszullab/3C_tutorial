@@ -410,6 +410,10 @@ if __name__ == "__main__":
         # Thresholds supplied by user beforehand
         uncut_thr, loop_thr = args.thresholds
     else:
+        if os.name == 'nt':
+            args.interactive = False
+            print("Warning: Interactive mode disabled on windows machine, thresholds "
+                  "estimated automatically and plots not shown.")
         # Threshold defined at runtime
         with open(args.input_file) as handle_in:
             uncut_thr, loop_thr = get_thresholds(
