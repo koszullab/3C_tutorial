@@ -9,9 +9,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import sys
-import contextlib
 import argparse
-import pysam as ps
 import os
 
 
@@ -176,32 +174,41 @@ def get_thresholds(in_dat, interactive=False):
         )
 
     if interactive:
-        # PLot:
-        plot_event(n_events, "++ (weirds)")
-        plot_event(n_events, "-- (weirds)")
-        plot_event(n_events, "+- (uncuts)")
-        plot_event(n_events, "-+ (loops)")
-        plt.grid()
-        plt.xlabel("Number of restriction fragment(s)")
-        plt.ylabel("Number of events")
-        plt.yscale("log")
-        plt.legend()
-        plt.show(block=False)
+        try:
+            # PLot:
+            plot_event(n_events, "++ (weirds)")
+            plot_event(n_events, "-- (weirds)")
+            plot_event(n_events, "+- (uncuts)")
+            plot_event(n_events, "-+ (loops)")
+            plt.grid()
+            plt.xlabel("Number of restriction fragment(s)")
+            plt.ylabel("Number of events")
+            plt.yscale("log")
+            plt.legend()
+            plt.show(block=False)
 
-        # Asks the user for appropriate thresholds
-        print(
-            "Please enter the number of restriction fragments separating "
-            "reads in a Hi-C pair below which \033[91mloops\033[0m and "
-            "\033[92muncuts\033[0m events will be excluded\n",
-            file=sys.stderr,
-        )
+            # Asks the user for appropriate thresholds
+            print(
+                "Please enter the number of restriction fragments separating "
+                "reads in a Hi-C pair below which \033[91mloops\033[0m and "
+                "\033[92muncuts\033[0m events will be excluded\n",
+                file=sys.stderr,
+            )
+        except _tkinter.TclError:
+            print(
+                "No Xserver (might be due to windows environment), " "skipping figure generation",
+                file=sys.stderr,
+            )
         thr_uncut = int(
             input("Enter threshold for the \033[92muncuts\033[0m events (+-):")
         )
         thr_loop = int(
             input("Enter threshold for the \033[91mloops\033[0m events (-+):")
         )
-        plt.clf()
+        try:
+            plt.clf()
+        except _tkinter.TclError:
+            pass
     else:
         # Estimate thresholds from data
         all_events = np.log(np.array(list(n_events.values())))
@@ -258,7 +265,6 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
     n_uncuts = 0
     n_loops = 0
     n_weirds = 0
-    n_int = 0
     lrange_intra = 0
     lrange_inter = 0
 
@@ -343,63 +349,68 @@ def filter_events(in_dat, out_filtered, thr_uncut, thr_loop, plot_events=False):
 
     # Visualize summary interactively if requested by user
     if plot_events:
+        try:
+            # Plot: make a square figure and axes to plot a pieChart:
+            plt.figure(1, figsize=(6, 6))
+            ax = plt.axes([0.1, 0.1, 0.8, 0.8])
+            # The slices will be ordered and plotted counter-clockwise.
+            labels = "Uncuts", "Loops", "Weirds", "3D intra", "3D inter"
+            fracs = [n_uncuts, n_loops, n_weirds, lrange_intra, lrange_inter]
+            colors = ["salmon", "lightskyblue", "lightcoral", "palegreen", "plum"]
+            plt.pie(
+                fracs,
+                labels=labels,
+                colors=colors,
+                autopct="%1.1f%%",
+                shadow=True,
+                startangle=90,
+            )
+            plt.title("Distribution of library events", bbox={"facecolor": "1.0", "pad": 5})
+            plt.text(
+                0.3,
+                1.15,
+                "Threshold Uncuts =" + str(thr_uncut),
+                fontdict=None,
+                withdash=False,
+            )
+            plt.text(
+                0.3,
+                1.05,
+                "Threshold Loops =" + str(thr_loop),
+                fontdict=None,
+                withdash=False,
+            )
 
-        # Plot: make a square figure and axes to plot a pieChart:
-        plt.figure(1, figsize=(6, 6))
-        ax = plt.axes([0.1, 0.1, 0.8, 0.8])
-        # The slices will be ordered and plotted counter-clockwise.
-        labels = "Uncuts", "Loops", "Weirds", "3D intra", "3D inter"
-        fracs = [n_uncuts, n_loops, n_weirds, lrange_intra, lrange_inter]
-        colors = ["salmon", "lightskyblue", "lightcoral", "palegreen", "plum"]
-        plt.pie(
-            fracs,
-            labels=labels,
-            colors=colors,
-            autopct="%1.1f%%",
-            shadow=True,
-            startangle=90,
-        )
-        plt.title("Distribution of library events", bbox={"facecolor": "1.0", "pad": 5})
-        plt.text(
-            0.3,
-            1.15,
-            "Threshold Uncuts =" + str(thr_uncut),
-            fontdict=None,
-            withdash=False,
-        )
-        plt.text(
-            0.3,
-            1.05,
-            "Threshold Loops =" + str(thr_loop),
-            fontdict=None,
-            withdash=False,
-        )
-
-        plt.text(
-            -1.5,
-            -1.2,
-            "Total number of reads =" + str(i),
-            fontdict=None,
-            withdash=False,
-        )
-        plt.text(
-            -1.5,
-            -1.3,
-            "Ratio inter/(intra+inter) =" + str(ratio_inter) + "%",
-            fontdict=None,
-            withdash=False,
-        )
-        plt.text(
-            -1.5,
-            -1.4,
-            "selected reads = {0}%".format(
-                float(lrange_inter + lrange_intra)
-                / (n_loops + n_uncuts + n_weirds + lrange_inter + lrange_intra)
-            ),
-            fontdict=None,
-            withdash=False,
-        )
-        plt.show()
+            plt.text(
+                -1.5,
+                -1.2,
+                "Total number of reads =" + str(i),
+                fontdict=None,
+                withdash=False,
+            )
+            plt.text(
+                -1.5,
+                -1.3,
+                "Ratio inter/(intra+inter) =" + str(ratio_inter) + "%",
+                fontdict=None,
+                withdash=False,
+            )
+            plt.text(
+                -1.5,
+                -1.4,
+                "selected reads = {0}%".format(
+                    float(lrange_inter + lrange_intra)
+                    / (n_loops + n_uncuts + n_weirds + lrange_inter + lrange_intra)
+                ),
+                fontdict=None,
+                withdash=False,
+            )
+            plt.show()
+        except _tkinter.TclError:
+            print(
+                "No Xserver (might be due to windows environment), " "skipping figure generation",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":
